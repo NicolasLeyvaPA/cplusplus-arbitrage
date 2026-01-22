@@ -151,6 +151,12 @@ target_link_libraries(replay_tool PRIVATE
     CLI11::CLI11
 )
 
+# Demo simulator (standalone)
+add_executable(demo_simulator demo_simulator.cpp)
+target_link_libraries(demo_simulator PRIVATE
+    Threads::Threads
+)
+
 # Install targets
 install(TARGETS dailyarb replay_tool
     RUNTIME DESTINATION bin
