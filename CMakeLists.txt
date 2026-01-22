@@ -75,21 +75,50 @@ include_directories(
 
 # Main library sources
 set(LIB_SOURCES
+    # Config
     src/config/config.cpp
+
+    # Core reliability components (v2.0)
+    src/core/kill_switch.cpp
+    src/core/state_manager.cpp
+    src/core/exposure_manager.cpp
+    src/core/reconciler.cpp
+    src/core/connection_health.cpp
+    src/core/degradation_manager.cpp
+
+    # Market data
     src/market_data/binance_client.cpp
     src/market_data/polymarket_client.cpp
     src/market_data/order_book.cpp
+
+    # Strategy
     src/strategy/strategy_base.cpp
     src/strategy/underpricing_strategy.cpp
     src/strategy/stale_odds_strategy.cpp
+    src/strategy/volatility_fair_value.cpp
+    src/strategy/regime_filter.cpp
+
+    # Execution
     src/execution/execution_engine.cpp
     src/execution/order.cpp
+    src/execution/paired_executor.cpp
+
+    # Risk
     src/risk/risk_manager.cpp
+
+    # Position
     src/position/position_manager.cpp
+
+    # UI
     src/ui/terminal_ui.cpp
+
+    # Utils
     src/utils/crypto.cpp
     src/utils/time_utils.cpp
     src/utils/metrics.cpp
+    src/utils/alerter.cpp
+
+    # Persistence
     src/persistence/trade_ledger.cpp
 )
 

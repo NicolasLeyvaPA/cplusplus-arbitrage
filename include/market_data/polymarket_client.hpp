@@ -68,8 +68,51 @@ public:
 
     // These require authentication
     OrderResponse place_order(const OrderRequest& req);
-    bool cancel_order(const std::string& order_id);
+    OrderResponse submit_order(const Order& order);  // Alternative submission method
+
+    struct CancelResponse {
+        bool success{false};
+        std::string error;
+    };
+    CancelResponse cancel_order(const std::string& order_id);
+
     std::vector<Fill> get_trades(const std::string& market_id);
+
+    // Order query (for reconciliation)
+    std::optional<Order> get_order(const std::string& order_id);
+
+    struct OpenOrdersResponse {
+        bool success{false};
+        std::vector<Order> orders;
+        std::string error;
+    };
+    OpenOrdersResponse get_open_orders();
+
+    // Position query (for reconciliation)
+    struct PositionInfo {
+        std::string market_id;
+        std::string token_id;
+        std::string outcome;
+        double size{0.0};
+        double avg_price{0.0};
+        double unrealized_pnl{0.0};
+        double realized_pnl{0.0};
+    };
+    struct PositionsResponse {
+        bool success{false};
+        std::vector<PositionInfo> positions;
+        std::string error;
+    };
+    PositionsResponse get_positions();
+
+    // Balance query (for reconciliation)
+    struct BalanceResponse {
+        bool success{false};
+        double available{0.0};
+        double locked{0.0};
+        std::string error;
+    };
+    BalanceResponse get_balance();
 
     // Get book reference (for direct access)
     BinaryMarketBook* get_market_book(const std::string& market_id);

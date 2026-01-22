@@ -97,8 +97,25 @@ public:
 
     const std::string& market_id() const { return market_id_; }
 
+    // Token IDs for YES/NO outcomes
+    void set_yes_token_id(const std::string& id) { yes_token_id_ = id; }
+    void set_no_token_id(const std::string& id) { no_token_id_ = id; }
+    const std::string& yes_token_id() const { return yes_token_id_; }
+    const std::string& no_token_id() const { return no_token_id_; }
+
+    // Market metadata
+    void set_question(const std::string& q) { question_ = q; }
+    const std::string& question() const { return question_; }
+
+    void set_end_date(const WallClock& d) { end_date_ = d; }
+    const WallClock& end_date() const { return end_date_; }
+
 private:
     std::string market_id_;
+    std::string yes_token_id_;
+    std::string no_token_id_;
+    std::string question_;
+    WallClock end_date_;
     OrderBook yes_book_;
     OrderBook no_book_;
 };
