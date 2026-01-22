@@ -41,12 +41,18 @@ void PositionManager::apply_fill_to_position(Position& pos, const Fill& fill) {
         pos.cost_basis += fill_notional;
         pos.size = new_size;
     } else {
-        // Reducing position
+        // Reducing position - calculate P&L based on position direction
         double reduction = std::min(std::abs(signed_size), std::abs(pos.size));
-        double realized = reduction * (fill.price - pos.avg_entry_price);
+        double realized;
 
-        if (fill.side == Side::SELL) {
-            realized = -realized;  // Profit from selling at higher price
+        if (pos.size > 0) {
+            // Closing LONG position by selling
+            // Profit = (sell_price - entry_price) * shares
+            realized = reduction * (fill.price - pos.avg_entry_price);
+        } else {
+            // Closing SHORT position by buying
+            // Profit = (entry_price - buy_price) * shares
+            realized = reduction * (pos.avg_entry_price - fill.price);
         }
 
         pos.realized_pnl += realized - fill.fee;
