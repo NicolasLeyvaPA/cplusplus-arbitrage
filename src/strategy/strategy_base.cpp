@@ -1,5 +1,6 @@
 #include "strategy/strategy_base.hpp"
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <cmath>
 
 namespace arb {

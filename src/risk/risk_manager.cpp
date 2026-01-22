@@ -1,5 +1,6 @@
 #include "risk/risk_manager.hpp"
 #include <spdlog/spdlog.h>
+#include <fmt/format.h>
 #include <algorithm>
 
 namespace arb {
@@ -153,20 +154,16 @@ double RiskManager::daily_loss_remaining() const {
 }
 
 void RiskManager::activate_kill_switch(const std::string& reason) {
-    {
-        std::lock_guard<std::mutex> lock(kill_switch_mutex_);
-        kill_switch_reason_ = reason;
-    }
-    kill_switch_.store(true);
+    std::lock_guard<std::mutex> lock(kill_switch_mutex_);
+    kill_switch_reason_ = reason;
+    kill_switch_.store(true);  // Set while holding lock to ensure reason is visible
     spdlog::warn("KILL SWITCH ACTIVATED: {}", reason);
 }
 
 void RiskManager::deactivate_kill_switch() {
-    kill_switch_.store(false);
-    {
-        std::lock_guard<std::mutex> lock(kill_switch_mutex_);
-        kill_switch_reason_.clear();
-    }
+    std::lock_guard<std::mutex> lock(kill_switch_mutex_);
+    kill_switch_.store(false);  // Clear while holding lock
+    kill_switch_reason_.clear();
     spdlog::info("Kill switch deactivated");
 }
 
