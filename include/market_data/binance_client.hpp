@@ -58,6 +58,7 @@ private:
 
     BtcPrice current_price_;
     mutable std::mutex price_mutex_;
+    Timestamp last_update_time_;
 
     std::atomic<int64_t> messages_received_{0};
 

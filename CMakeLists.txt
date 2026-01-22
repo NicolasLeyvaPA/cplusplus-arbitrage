@@ -36,18 +36,24 @@ FetchContent_Declare(
     URL_HASH SHA256=d6c65aca6b1ed68e7a182f4757257b107ae403032760ed6ef121c9d55e81757d
 )
 
+# fmt for formatting (must come before spdlog)
+FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 10.2.1
+)
+
+# Make fmt available first
+FetchContent_MakeAvailable(fmt)
+
+# Configure spdlog to use external fmt (avoid bundled fmt conflicts)
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
+
 # spdlog for logging
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
     GIT_TAG v1.13.0
-)
-
-# fmt for formatting
-FetchContent_Declare(
-    fmt
-    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-    GIT_TAG 10.2.1
 )
 
 # CLI11 for command line parsing
@@ -64,7 +70,7 @@ FetchContent_Declare(
     GIT_TAG v1.14.0
 )
 
-FetchContent_MakeAvailable(json spdlog fmt cli11 googletest)
+FetchContent_MakeAvailable(json spdlog cli11 googletest)
 
 # Include directories
 include_directories(
