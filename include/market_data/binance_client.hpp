@@ -60,6 +60,7 @@ private:
     mutable std::mutex price_mutex_;
 
     std::atomic<int64_t> messages_received_{0};
+    Timestamp last_update_time_{};
 
     // Socket handle (platform-specific)
     void* socket_{nullptr};

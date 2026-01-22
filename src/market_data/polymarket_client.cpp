@@ -189,7 +189,9 @@ std::string PolymarketClient::generate_l2_signature(const std::string& timestamp
     }
 
     std::string message = timestamp + method + request_path + body;
-    return crypto::hmac_sha256(crypto::base64_decode(api_secret_).data(), message);
+    auto decoded = crypto::base64_decode(api_secret_);
+    std::string key(decoded.begin(), decoded.end());
+    return crypto::hmac_sha256(key, message);
 }
 
 std::vector<Market> PolymarketClient::fetch_markets() {
