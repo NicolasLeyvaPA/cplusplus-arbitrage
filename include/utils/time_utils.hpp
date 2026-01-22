@@ -2,6 +2,8 @@
 
 #include <string>
 #include <chrono>
+#include <mutex>
+#include <thread>
 #include "common/types.hpp"
 
 namespace arb {

@@ -6,8 +6,7 @@
 #include "risk/risk_manager.hpp"
 #include "execution/execution_engine.hpp"
 #include <spdlog/spdlog.h>
-#include <fmt/format.h>
-#include <fmt/chrono.h>
+#include <spdlog/fmt/fmt.h>
 #include <iostream>
 #include <iomanip>
 #include <ctime>

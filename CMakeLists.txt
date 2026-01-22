@@ -64,7 +64,12 @@ FetchContent_Declare(
     GIT_TAG v1.14.0
 )
 
-FetchContent_MakeAvailable(json spdlog fmt cli11 googletest)
+# Configure spdlog to use external fmt to avoid conflicts
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+
+# Make fmt available first since spdlog depends on it
+FetchContent_MakeAvailable(fmt)
+FetchContent_MakeAvailable(json spdlog cli11 googletest)
 
 # Include directories
 include_directories(
