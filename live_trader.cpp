@@ -407,8 +407,8 @@ public:
 
         {
             std::lock_guard<std::mutex> lock(trades_mutex_);
-            trades_.push_front({now, "BUY YES", yes_ask_, qty, expected_pnl / 2, daily_pnl_});
-            trades_.push_front({now, "BUY NO", no_ask_, qty, expected_pnl / 2, daily_pnl_});
+            trades_.push_front({static_cast<uint64_t>(now), "BUY YES", yes_ask_, qty, expected_pnl / 2, daily_pnl_});
+            trades_.push_front({static_cast<uint64_t>(now), "BUY NO", no_ask_, qty, expected_pnl / 2, daily_pnl_});
             while (trades_.size() > 50) trades_.pop_back();
         }
     }
@@ -441,7 +441,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(trades_mutex_);
             std::string outcome = yes_wins ? "YES WINS" : "NO WINS";
-            trades_.push_front({now, outcome, 1.0, winning_qty, profit, daily_pnl_});
+            trades_.push_front({static_cast<uint64_t>(now), outcome, 1.0, winning_qty, profit, daily_pnl_});
             while (trades_.size() > 50) trades_.pop_back();
         }
 
