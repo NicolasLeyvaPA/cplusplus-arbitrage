@@ -10,6 +10,7 @@ tests
 live_trader
 stale_odds_trader
 dashboard_trader
+polymarket_arb
 
 # Object files
 *.o
