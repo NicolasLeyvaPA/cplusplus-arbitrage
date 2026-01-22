@@ -252,7 +252,8 @@ std::vector<Market> PolymarketClient::fetch_btc_markets() {
     std::vector<Market> btc_markets;
 
     // Filter for BTC 15-minute markets
-    std::regex btc_pattern("(?i)btc.*15.*min|bitcoin.*15.*min|btc.*up.*down|bitcoin.*up.*down",
+    // Note: std::regex::icase handles case insensitivity (no (?i) needed)
+    std::regex btc_pattern("btc.*15.*min|bitcoin.*15.*min|btc.*up.*down|bitcoin.*up.*down",
                            std::regex::icase);
 
     for (const auto& market : all_markets) {
