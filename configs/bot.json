@@ -1,0 +1,54 @@
+{
+  "mode": "dry-run",
+  "starting_balance_usdc": 50.0,
+
+  "risk": {
+    "max_notional_per_trade": 1.50,
+    "max_daily_loss": 5.0,
+    "max_open_positions": 3,
+    "max_exposure_per_market": 3.0,
+    "stop_loss_threshold": 0.10,
+    "slippage_threshold_bps": 50.0,
+    "max_orders_per_minute": 10
+  },
+
+  "strategy": {
+    "min_edge_cents": 2.0,
+    "max_spread_to_trade": 0.05,
+    "lag_move_threshold_bps": 25.0,
+    "staleness_window_ms": 500,
+    "min_confidence": 0.6,
+    "target_fill_rate": 0.95,
+    "enable_s1": true,
+    "enable_s2": true,
+    "enable_s3": false
+  },
+
+  "connection": {
+    "polymarket_rest_url": "https://clob.polymarket.com",
+    "polymarket_ws_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
+    "polymarket_gamma_url": "https://gamma-api.polymarket.com",
+    "binance_ws_url": "wss://stream.binance.com:9443/ws",
+    "binance_symbol": "btcusdt",
+    "reconnect_delay_ms": 1000,
+    "max_reconnect_attempts": 10,
+    "heartbeat_interval_ms": 30000,
+    "connection_timeout_ms": 10000
+  },
+
+  "logging": {
+    "log_dir": "./logs",
+    "log_level": "info",
+    "log_to_console": true,
+    "log_to_file": true,
+    "json_format": true,
+    "max_log_file_size_mb": 100,
+    "max_log_files": 5
+  },
+
+  "trade_ledger_path": "./data/trades.json",
+  "state_snapshot_path": "./data/state.json",
+
+  "market_slugs": [],
+  "market_pattern": "btc.*15m|bitcoin.*up.*down"
+}

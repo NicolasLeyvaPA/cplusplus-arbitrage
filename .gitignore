@@ -1,0 +1,28 @@
+# Build artifacts
+build/
+cmake-build-*/
+
+# Compiled executables
+demo_simulator
+dailyarb
+replay_tool
+tests
+
+# Object files
+*.o
+*.obj
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs and data
+logs/
+data/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
