@@ -79,9 +79,21 @@ void print_startup_banner(const Config& config) {
 ║     ╚═════╝ ╚═╝  ╚═╝╚═╝╚══════╝╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝                 ║
 ║                                                                               ║
 ║              Low-Latency Binary Outcome Arbitrage Bot                         ║
-║                                                                               ║
+║                      ** RESEARCH TOOL ONLY **                                 ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 )" << std::endl;
+
+    // CRITICAL DISCLAIMER
+    std::cout << "╔═══════════════════════════════════════════════════════════════════════════════╗\n";
+    std::cout << "║  CRITICAL: THIS SYSTEM CANNOT TRADE REAL MONEY PROFITABLY                     ║\n";
+    std::cout << "╠═══════════════════════════════════════════════════════════════════════════════╣\n";
+    std::cout << "║  - Paper trading uses ADVERSARIAL assumptions, still not predictive           ║\n";
+    std::cout << "║  - Live mode sends paired orders SEQUENTIALLY (non-atomic, creates exposure)  ║\n";
+    std::cout << "║  - Competition is faster than you                                             ║\n";
+    std::cout << "║  - Gas fees exceed edge on small trades                                       ║\n";
+    std::cout << "║                                                                               ║\n";
+    std::cout << "║  See TRUTH.md and DISCLAIMER.md for forensic analysis.                        ║\n";
+    std::cout << "╚═══════════════════════════════════════════════════════════════════════════════╝\n\n";
 
     std::cout << "┌─────────────────────────────────────────────────────────────────────────────┐\n";
     std::cout << "│ RISK & REALITY CHECK                                                        │\n";
