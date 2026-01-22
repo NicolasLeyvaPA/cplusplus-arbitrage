@@ -9,6 +9,7 @@ replay_tool
 tests
 live_trader
 stale_odds_trader
+dashboard_trader
 
 # Object files
 *.o
