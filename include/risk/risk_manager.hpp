@@ -88,7 +88,7 @@ private:
 
     // Connectivity tracking
     std::atomic<int> connectivity_issues_{0};
-    Timestamp last_connectivity_issue_;
+    Timestamp last_connectivity_issue_{};  // Value-initialized to epoch
 
     // Rate limiting
     mutable std::mutex rate_limit_mutex_;
