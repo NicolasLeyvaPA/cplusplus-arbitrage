@@ -420,6 +420,12 @@ public:
         std::uniform_real_distribution<> dist(0.0, 1.0);
         if (dist(rng_) > 0.02) return;  // 2% chance per tick
 
+        force_settle();
+    }
+
+    void force_settle() {
+        if (yes_qty_ <= 0) return;
+
         // Determine winner based on current BTC price
         double btc = g_btc_price.load();
         double round_target = std::round(btc / 1000.0) * 1000.0;
@@ -449,6 +455,20 @@ public:
         yes_qty_ = yes_cost_ = no_qty_ = no_cost_ = 0;
     }
 
+    // Settle all open positions (call at session end)
+    void settle_all() { force_settle(); }
+
+    // True P&L = actual balance change from starting
+    double true_pnl() const { return balance_ - 50.0; }
+
+    // Unrealized P&L (value locked in open positions)
+    double unrealized_pnl() const {
+        if (yes_qty_ <= 0) return 0.0;
+        // Estimate: we paid yes_cost_ + no_cost_, one side will pay qty * 0.98
+        double expected_payout = yes_qty_ * (1.0 - FEE);
+        return expected_payout - (yes_cost_ + no_cost_);
+    }
+
     // Getters
     double balance() const { return balance_; }
     double daily_pnl() const { return daily_pnl_; }
@@ -459,6 +479,7 @@ public:
     double sum_asks() const { return yes_ask_ + no_ask_; }
     bool has_position() const { return yes_qty_ > 0; }
     double position_qty() const { return yes_qty_; }
+    double position_cost() const { return yes_cost_ + no_cost_; }
 
     std::vector<Trade> recent_trades(int n = 15) {
         std::lock_guard<std::mutex> lock(trades_mutex_);
@@ -492,16 +513,18 @@ void render_ui(PaperTrader& trader) {
     }
     std::cout << "    " << "║\n";
 
-    // Stats bar
+    // Stats bar - use TRUE P&L (actual balance change)
+    double true_pnl = trader.balance() - 50.0;
+
     std::cout << "╠════════════════════════════════════════════════════════════════════╣\n"
               << "║  " << RST;
 
     std::cout << "Balance: " << BLD << "$" << std::setprecision(2) << trader.balance() << RST << "  ";
 
-    if (trader.daily_pnl() >= 0) {
-        std::cout << "PnL: " << GRN << BLD << "+$" << std::setprecision(2) << trader.daily_pnl() << RST << "  ";
+    if (true_pnl >= 0) {
+        std::cout << "PnL: " << GRN << BLD << "+$" << std::setprecision(2) << true_pnl << RST << "  ";
     } else {
-        std::cout << "PnL: " << RED << BLD << "-$" << std::setprecision(2) << -trader.daily_pnl() << RST << "  ";
+        std::cout << "PnL: " << RED << BLD << "-$" << std::setprecision(2) << -true_pnl << RST << "  ";
     }
 
     std::cout << "Trades: " << BLD << trader.trade_count() << RST << "  ";
@@ -656,6 +679,12 @@ int main(int argc, char* argv[]) {
     g_running = false;
     binance.join();
 
+    // Settle any open positions before final tally
+    trader.settle_all();
+
+    // Calculate TRUE P&L (actual balance change)
+    double true_pnl = trader.balance() - 50.0;
+
     // Final summary
     std::cout << CLR;
     std::cout << CYN << BLD << "\n"
@@ -668,12 +697,12 @@ int main(int argc, char* argv[]) {
     std::cout << "  Total Trades:      " << trader.trade_count() << "\n";
     std::cout << "  Total Fees:        $" << std::setprecision(4) << trader.fees() << "\n";
 
-    if (trader.daily_pnl() >= 0) {
-        std::cout << GRN << BLD << "\n  NET PROFIT:        +$" << std::setprecision(2) << trader.daily_pnl() << RST << "\n";
-        std::cout << GRN << "  Return:            +" << std::setprecision(1) << (trader.daily_pnl() / 50.0 * 100) << "%" << RST << "\n";
+    if (true_pnl >= 0) {
+        std::cout << GRN << BLD << "\n  NET PROFIT:        +$" << std::setprecision(2) << true_pnl << RST << "\n";
+        std::cout << GRN << "  Return:            +" << std::setprecision(1) << (true_pnl / 50.0 * 100) << "%" << RST << "\n";
     } else {
-        std::cout << RED << BLD << "\n  NET LOSS:          -$" << std::setprecision(2) << -trader.daily_pnl() << RST << "\n";
-        std::cout << RED << "  Return:            " << std::setprecision(1) << (trader.daily_pnl() / 50.0 * 100) << "%" << RST << "\n";
+        std::cout << RED << BLD << "\n  NET LOSS:          -$" << std::setprecision(2) << -true_pnl << RST << "\n";
+        std::cout << RED << "  Return:            " << std::setprecision(1) << (true_pnl / 50.0 * 100) << "%" << RST << "\n";
     }
 
     std::cout << "\n";
