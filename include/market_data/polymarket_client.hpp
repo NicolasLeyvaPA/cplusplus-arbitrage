@@ -29,8 +29,8 @@ public:
     ~PolymarketClient();
 
     // Market discovery (REST)
-    std::vector<Market> fetch_markets();
-    std::vector<Market> fetch_btc_markets();  // Filtered to BTC up/down markets
+    std::vector<Market> fetch_markets();  // Fetch all active markets
+    std::vector<Market> fetch_filtered_markets(const std::string& pattern);  // Filtered by regex pattern (empty = all)
     std::optional<Market> fetch_market(const std::string& condition_id);
 
     // Order book (REST)

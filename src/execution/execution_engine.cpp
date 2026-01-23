@@ -177,8 +177,23 @@ ExecutionEngine::SubmitResult ExecutionEngine::submit_paired_order(
             break;
 
         case TradingMode::LIVE:
-            // In live mode, we need to be very careful about paired execution
-            spdlog::warn("[LIVE] Paired order requires atomic execution - using sequential IOC");
+            // =========================================================================
+            // CRITICAL DANGER: NON-ATOMIC EXECUTION
+            // =========================================================================
+            // This code sends YES and NO orders SEQUENTIALLY, not atomically.
+            // This means:
+            //   1. YES order may fill while NO order does not
+            //   2. Market can move between the two orders
+            //   3. You can end up with NAKED DIRECTIONAL EXPOSURE
+            //   4. Expected value of this execution method is NEGATIVE
+            //
+            // DO NOT USE THIS FOR REAL MONEY WITHOUT UNDERSTANDING THIS RISK.
+            // Proper atomic execution requires a smart contract or exchange-level
+            // support, which Polymarket does not currently offer.
+            // =========================================================================
+            spdlog::critical("[LIVE] DANGER: Paired order execution is NON-ATOMIC!");
+            spdlog::critical("[LIVE] If YES fills but NO does not, you have naked exposure!");
+            spdlog::critical("[LIVE] Sequential IOC cannot guarantee matched fills!");
             send_live_order(pair.yes_order);
             send_live_order(pair.no_order);
             break;
@@ -388,23 +403,42 @@ void ExecutionEngine::record_fill(const std::string& order_id, const Fill& fill)
 }
 
 void ExecutionEngine::simulate_fill(Order& order) {
-    // Simple simulation: fill at limit price with small random delay
+    // =========================================================================
+    // WARNING: RESEARCH SIMULATION ONLY - NOT PREDICTIVE OF REAL PERFORMANCE
+    // =========================================================================
+    // These assumptions are ADVERSARIAL to reflect real-world conditions:
+    // - Fill rates on mispriced orders are LOW (30-50%, not 90%)
+    // - Slippage is REAL (1-5% adverse price movement)
+    // - Partial fills are UNFAVORABLE (20-60%, not 70-100%)
+    // - Fees include estimated gas costs
+    //
+    // EVEN WITH THESE ADVERSARIAL ASSUMPTIONS, PAPER TRADING CANNOT PREDICT
+    // REAL PERFORMANCE. Competition, latency, and market microstructure
+    // effects are NOT modeled.
+    // =========================================================================
 
     std::random_device rd;
     std::mt19937 gen(rd());
 
-    // Simulate fill probability based on price aggressiveness
-    // For now, assume 90% fill rate for limit orders
+    // ADVERSARIAL fill probability: 40% for mispriced orders
+    // Reality: other traders see the same opportunity and are faster
     std::uniform_real_distribution<> fill_prob(0.0, 1.0);
-    if (fill_prob(gen) > 0.90) {
+    if (fill_prob(gen) > 0.40) {  // 60% rejection rate - ADVERSARIAL
         order.mark_canceled();
-        spdlog::info("[PAPER] Order expired unfilled: {}", order.client_order_id);
+        spdlog::warn("[PAPER-ADVERSARIAL] Order likely NOT filled in reality: {}", order.client_order_id);
         return;
     }
 
-    // Simulate partial fills
-    std::uniform_real_distribution<> partial_prob(0.7, 1.0);
+    // ADVERSARIAL partial fills: 20-60% of requested size
+    std::uniform_real_distribution<> partial_prob(0.2, 0.6);
     double fill_ratio = partial_prob(gen);
+
+    // ADVERSARIAL slippage: 1-3% adverse price movement
+    std::uniform_real_distribution<> slippage_dist(0.01, 0.03);
+    double slippage = slippage_dist(gen);
+    double adverse_price = order.side == Side::BUY
+        ? order.price * (1.0 + slippage)   // Pay more when buying
+        : order.price * (1.0 - slippage);  // Receive less when selling
 
     Fill fill;
     fill.order_id = order.client_order_id;
@@ -412,18 +446,23 @@ void ExecutionEngine::simulate_fill(Order& order) {
     fill.market_id = order.market_id;
     fill.token_id = order.token_id;
     fill.side = order.side;
-    fill.price = order.price;
+    fill.price = adverse_price;  // ADVERSARIAL: slippage applied
     fill.size = order.original_size * fill_ratio;
     fill.notional = fill.price * fill.size;
-    fill.fee = fill.notional * 0.02;  // 2% fee simulation
+    // Correct Polymarket parabolic fee: fee = price * (1 - price) * 0.0624 per share
+    double per_share_fee = fill.price * (1.0 - fill.price) * 0.0624;
+    fill.fee = per_share_fee * fill.size;
     fill.fill_time = now();
     fill.exchange_time_ms = now_ms();
 
+    spdlog::warn("[PAPER-ADVERSARIAL] Fill with {:.1f}% slippage, {:.0f}% partial: {}",
+                slippage * 100, fill_ratio * 100, order.client_order_id);
+
     order.mark_partial_fill(fill);
 
-    spdlog::info("[PAPER] Simulated fill: {} {} {:.2f} @ {:.4f}",
+    spdlog::warn("[PAPER-ADVERSARIAL] Simulated fill (NOT PREDICTIVE): {} {} {:.2f} @ {:.4f} (requested {:.4f})",
                 order.client_order_id, side_to_string(order.side),
-                fill.size, fill.price);
+                fill.size, fill.price, order.price);
 
     if (on_fill_) {
         on_fill_(fill);
