@@ -23,11 +23,108 @@ using namespace arb;
 // Global shutdown flag
 std::atomic<bool> g_shutdown{false};
 
+// Session end time (0 = no limit)
+std::chrono::steady_clock::time_point g_session_end_time{};
+bool g_has_session_limit{false};
+
 void signal_handler(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         spdlog::info("Shutdown signal received");
         g_shutdown = true;
     }
+}
+
+// Parse duration string like "1.5h", "30m", "90s", "2h30m", "1h 30m"
+// Returns duration in seconds, or 0 if invalid/empty
+int64_t parse_duration_string(const std::string& input) {
+    if (input.empty()) return 0;
+
+    std::string s = input;
+    // Remove spaces
+    s.erase(std::remove(s.begin(), s.end(), ' '), s.end());
+
+    // Convert to lowercase
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+
+    int64_t total_seconds = 0;
+    std::string number_buf;
+
+    for (size_t i = 0; i < s.size(); i++) {
+        char c = s[i];
+        if (std::isdigit(c) || c == '.') {
+            number_buf += c;
+        } else if (c == 'h' || c == 'm' || c == 's') {
+            if (number_buf.empty()) continue;
+
+            double value = std::stod(number_buf);
+            if (c == 'h') {
+                total_seconds += static_cast<int64_t>(value * 3600);
+            } else if (c == 'm') {
+                total_seconds += static_cast<int64_t>(value * 60);
+            } else if (c == 's') {
+                total_seconds += static_cast<int64_t>(value);
+            }
+            number_buf.clear();
+        }
+    }
+
+    // If only a number was provided (no unit), assume minutes
+    if (!number_buf.empty() && total_seconds == 0) {
+        double value = std::stod(number_buf);
+        total_seconds = static_cast<int64_t>(value * 60);  // Default to minutes
+    }
+
+    return total_seconds;
+}
+
+// Format duration for display
+std::string format_duration_display(int64_t seconds) {
+    if (seconds <= 0) return "unlimited";
+
+    int64_t hours = seconds / 3600;
+    int64_t minutes = (seconds % 3600) / 60;
+    int64_t secs = seconds % 60;
+
+    std::ostringstream ss;
+    if (hours > 0) {
+        ss << hours << "h";
+        if (minutes > 0) ss << " " << minutes << "m";
+    } else if (minutes > 0) {
+        ss << minutes << "m";
+        if (secs > 0) ss << " " << secs << "s";
+    } else {
+        ss << secs << "s";
+    }
+    return ss.str();
+}
+
+// Prompt user for session duration
+int64_t prompt_session_duration() {
+    std::cout << "\n┌─────────────────────────────────────────────────────────────────────────────┐\n";
+    std::cout << "│ SESSION DURATION                                                            │\n";
+    std::cout << "├─────────────────────────────────────────────────────────────────────────────┤\n";
+    std::cout << "│ How long do you want this session to run?                                  │\n";
+    std::cout << "│                                                                             │\n";
+    std::cout << "│ Examples:                                                                   │\n";
+    std::cout << "│   1.5h     → 1 hour 30 minutes                                             │\n";
+    std::cout << "│   30m      → 30 minutes                                                    │\n";
+    std::cout << "│   2h30m    → 2 hours 30 minutes                                            │\n";
+    std::cout << "│   90s      → 90 seconds                                                    │\n";
+    std::cout << "│   (empty)  → Run until Ctrl+C                                              │\n";
+    std::cout << "└─────────────────────────────────────────────────────────────────────────────┘\n";
+    std::cout << "Enter duration: ";
+
+    std::string input;
+    std::getline(std::cin, input);
+
+    int64_t seconds = parse_duration_string(input);
+    if (seconds > 0) {
+        std::cout << "Session will run for " << format_duration_display(seconds) << "\n\n";
+    } else {
+        std::cout << "Session will run until manually stopped (Ctrl+C)\n\n";
+    }
+
+    return seconds;
 }
 
 void setup_logging(const LoggingConfig& config) {
@@ -188,6 +285,18 @@ int main(int argc, char* argv[]) {
     // Print startup banner
     print_startup_banner(config);
 
+    // Prompt for session duration
+    int64_t session_duration_secs = prompt_session_duration();
+    if (session_duration_secs > 0) {
+        g_has_session_limit = true;
+        g_session_end_time = std::chrono::steady_clock::now() +
+                             std::chrono::seconds(session_duration_secs);
+        spdlog::info("Session will run for {} ({} seconds)",
+                     format_duration_display(session_duration_secs), session_duration_secs);
+    } else {
+        spdlog::info("Session will run until manually stopped (Ctrl+C)");
+    }
+
     // Signal handlers
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
@@ -341,6 +450,27 @@ int main(int argc, char* argv[]) {
 
     // Main trading loop
     while (!g_shutdown.load()) {
+        // Check session time limit
+        if (g_has_session_limit) {
+            auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+                g_session_end_time - std::chrono::steady_clock::now()
+            );
+            if (remaining.count() <= 0) {
+                spdlog::info("Session time limit reached. Shutting down...");
+                g_shutdown = true;
+                break;
+            }
+            // Log remaining time periodically (every 60 seconds)
+            static auto last_log_time = std::chrono::steady_clock::now();
+            auto since_last_log = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::steady_clock::now() - last_log_time
+            );
+            if (since_last_log.count() >= 60) {
+                spdlog::info("Session time remaining: {}", format_duration_display(remaining.count()));
+                last_log_time = std::chrono::steady_clock::now();
+            }
+        }
+
         // Check if we should continue trading
         if (risk_manager->should_halt_trading()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));

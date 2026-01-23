@@ -18,6 +18,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(CURL REQUIRED)
+find_package(SQLite3 REQUIRED)
 
 # FetchContent for dependencies
 include(FetchContent)
@@ -97,6 +98,8 @@ set(LIB_SOURCES
     src/utils/time_utils.cpp
     src/utils/metrics.cpp
     src/persistence/trade_ledger.cpp
+    src/persistence/session_database.cpp
+    src/arbitrage/multi_exchange_scanner.cpp
 )
 
 # Create static library
@@ -107,6 +110,7 @@ target_link_libraries(arblib PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     ${CURL_LIBRARIES}
+    SQLite::SQLite3
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     fmt::fmt
@@ -135,6 +139,9 @@ add_executable(tests
     tests/test_risk_manager.cpp
     tests/test_order_book.cpp
     tests/test_fee_calculation.cpp
+    tests/test_funding_dispersion.cpp
+    tests/test_session_database.cpp
+    tests/test_funding_settlement.cpp
 )
 target_link_libraries(tests PRIVATE
     arblib
