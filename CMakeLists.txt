@@ -136,6 +136,7 @@ add_executable(tests
     tests/test_risk_manager.cpp
     tests/test_order_book.cpp
     tests/test_fee_calculation.cpp
+    tests/test_funding_dispersion.cpp
 )
 target_link_libraries(tests PRIVATE
     arblib
