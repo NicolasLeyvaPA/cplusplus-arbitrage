@@ -18,14 +18,23 @@ namespace arb {
 // DELTA-NEUTRAL ENFORCER
 //
 // Ensures positions remain delta-neutral across exchanges and implements
-// the 5 kill conditions for emergency position closure.
+// kill conditions for emergency position closure.
 //
-// Kill Conditions:
+// Based on empirical analysis of constraint arbitrage failure modes:
+// - Oct 2025 crash: $19B liquidations, $65B OI wipeout
+// - USDe de-peg to $0.60 on Binance triggered unified margin contagion
+// - ADL (Auto-Deleveraging) converted hedged positions to naked longs
+// - Infrastructure lock-ups prevented manual intervention
+//
+// Kill Conditions (8 total):
 // 1. BASIS_DIVERGENCE: Cross-exchange basis exceeds threshold
 // 2. FUNDING_FLIP: Direction of net funding reverses
 // 3. SPREAD_COLLAPSE: Funding spread falls below min threshold
 // 4. EXCHANGE_HALT: Exchange becomes unreachable
 // 5. DRAWDOWN_LIMIT: Session drawdown exceeds configured limit
+// 6. ADL_RISK: Auto-deleveraging queue priority too high
+// 7. STABLECOIN_DEPEG: Collateral asset de-pegging (unified margin contagion)
+// 8. LIQUIDATION_CASCADE: Extreme leverage/OI skew detected
 // ============================================================================
 
 enum class KillReason {
@@ -33,7 +42,10 @@ enum class KillReason {
     FUNDING_FLIP,
     SPREAD_COLLAPSE,
     EXCHANGE_HALT,
-    DRAWDOWN_LIMIT
+    DRAWDOWN_LIMIT,
+    ADL_RISK,              // Auto-deleveraging imminent
+    STABLECOIN_DEPEG,      // Collateral de-peg (unified margin contagion)
+    LIQUIDATION_CASCADE    // Market-wide liquidation event
 };
 
 std::string to_string(KillReason reason);
@@ -43,20 +55,39 @@ struct DeltaNeutralConfig {
     double max_delta_notional{500};        // Max net delta in USD
     double delta_hedge_threshold{200};     // Hedge when delta exceeds this
 
-    // Kill condition thresholds
+    // Kill condition thresholds (original 5)
     double basis_divergence_limit{0.005};  // 0.5% basis divergence
     double basis_divergence_warning{0.003};// 0.3% warning threshold
     double min_funding_spread{0.00005};    // 0.005% minimum spread
     double max_session_drawdown{0.03};     // 3% max drawdown
     double funding_flip_buffer{0.00002};   // Buffer before flip triggers kill
 
+    // NEW: ADL risk thresholds (from Oct 2025 crash analysis)
+    double adl_queue_warning{0.7};         // 70% up ADL queue = warning
+    double adl_queue_critical{0.9};        // 90% up ADL queue = kill
+    double insurance_fund_warning{0.3};    // Warn if fund < 30% of normal
+
+    // NEW: Stablecoin de-peg thresholds (unified margin contagion)
+    double stablecoin_depeg_warning{0.005}; // 0.5% off peg = warning
+    double stablecoin_depeg_critical{0.02}; // 2% off peg = kill (USDe hit 40% in Oct 2025)
+
+    // NEW: Liquidation cascade detection
+    double leverage_ratio_warning{0.7};    // 70% of max leverage = warning
+    double oi_skew_critical{0.8};          // 80%+ long/short skew = danger
+    double liquidation_volume_spike{3.0};  // 3x normal liq volume = cascade
+
     // Timing
     int64_t exchange_timeout_ms{30000};    // 30s timeout = halt
     int64_t heartbeat_interval_ms{5000};   // Expected heartbeat frequency
+    int64_t api_latency_warning_ms{2000};  // >2s latency = infrastructure stress
 
     // Hedge parameters
     double hedge_aggressiveness{1.2};      // Overshoot hedge by 20%
     int max_hedge_retries{3};
+
+    // Regime-aware sizing (from research)
+    bool enable_dynamic_sizing{true};      // Shrink positions in high-vol
+    double vol_scaling_factor{0.5};        // Half size at 2x normal vol
 };
 
 struct DeltaSnapshot {
@@ -148,12 +179,31 @@ public:
     // Returns the most critical kill signal if any condition is triggered
     std::optional<KillSignal> check_kill_conditions();
 
-    // Individual kill condition checks
+    // Individual kill condition checks (original 5)
     std::optional<KillSignal> check_basis_divergence();
     std::optional<KillSignal> check_funding_flip();
     std::optional<KillSignal> check_spread_collapse();
     std::optional<KillSignal> check_exchange_halt();
     std::optional<KillSignal> check_drawdown_limit();
+
+    // NEW kill condition checks (from Oct 2025 crash analysis)
+    std::optional<KillSignal> check_adl_risk();
+    std::optional<KillSignal> check_stablecoin_depeg();
+    std::optional<KillSignal> check_liquidation_cascade();
+
+    // ========================================================================
+    // NEW: Market State Updates (for advanced kill conditions)
+    // ========================================================================
+
+    // Update ADL queue position (0-1, where 1 = top of queue = imminent ADL)
+    void update_adl_position(const std::string& venue, double queue_position);
+
+    // Update stablecoin prices for de-peg detection
+    void update_stablecoin_price(const std::string& symbol, double price);
+
+    // Update market-wide metrics for cascade detection
+    void update_market_metrics(double total_oi, double long_oi, double short_oi,
+                               double liquidation_volume_24h, double avg_liq_volume);
 
     // ========================================================================
     // Kill Execution
@@ -236,6 +286,19 @@ private:
     double initial_funding_direction_{0};
     bool funding_direction_set_{false};
 
+    // NEW: ADL tracking (from Oct 2025 crash analysis)
+    std::map<std::string, double> adl_queue_positions_;  // venue -> 0-1 queue position
+
+    // NEW: Stablecoin prices for de-peg detection
+    std::map<std::string, double> stablecoin_prices_;  // USDT, USDC, USDe, etc.
+
+    // NEW: Market-wide metrics for cascade detection
+    double total_oi_{0};
+    double long_oi_{0};
+    double short_oi_{0};
+    double liquidation_volume_24h_{0};
+    double avg_liquidation_volume_{0};
+
     // Callbacks
     HedgeCallback on_hedge_;
     KillCallback on_kill_;
@@ -256,6 +319,9 @@ inline std::string to_string(KillReason reason) {
         case KillReason::SPREAD_COLLAPSE: return "SPREAD_COLLAPSE";
         case KillReason::EXCHANGE_HALT: return "EXCHANGE_HALT";
         case KillReason::DRAWDOWN_LIMIT: return "DRAWDOWN_LIMIT";
+        case KillReason::ADL_RISK: return "ADL_RISK";
+        case KillReason::STABLECOIN_DEPEG: return "STABLECOIN_DEPEG";
+        case KillReason::LIQUIDATION_CASCADE: return "LIQUIDATION_CASCADE";
     }
     return "UNKNOWN";
 }
@@ -471,14 +537,20 @@ inline double DeltaNeutralEnforcer::get_net_funding_direction() const {
 
 inline std::optional<KillSignal> DeltaNeutralEnforcer::check_kill_conditions() {
     // Check all conditions and return the most urgent one
+    // Priority order reflects lessons from Oct 2025 crash
     std::optional<KillSignal> worst;
 
     auto checks = {
+        // Original 5 conditions
         check_basis_divergence(),
         check_funding_flip(),
         check_spread_collapse(),
         check_exchange_halt(),
-        check_drawdown_limit()
+        check_drawdown_limit(),
+        // NEW: From Oct 2025 crash analysis
+        check_adl_risk(),           // ADL converts hedges to naked positions
+        check_stablecoin_depeg(),   // Unified margin contagion (USDe hit $0.60)
+        check_liquidation_cascade() // Market-wide deleveraging event
     };
 
     for (const auto& signal : checks) {
@@ -703,6 +775,176 @@ inline void DeltaNeutralEnforcer::record_kill(
     event.positions_closed_json = json;
 
     db_->insert_kill_event(event);
+}
+
+// ============================================================================
+// NEW: Update methods for advanced kill conditions
+// ============================================================================
+
+inline void DeltaNeutralEnforcer::update_adl_position(
+    const std::string& venue,
+    double queue_position
+) {
+    adl_queue_positions_[venue] = queue_position;
+}
+
+inline void DeltaNeutralEnforcer::update_stablecoin_price(
+    const std::string& symbol,
+    double price
+) {
+    stablecoin_prices_[symbol] = price;
+}
+
+inline void DeltaNeutralEnforcer::update_market_metrics(
+    double total_oi,
+    double long_oi,
+    double short_oi,
+    double liquidation_volume_24h,
+    double avg_liq_volume
+) {
+    total_oi_ = total_oi;
+    long_oi_ = long_oi;
+    short_oi_ = short_oi;
+    liquidation_volume_24h_ = liquidation_volume_24h;
+    avg_liquidation_volume_ = avg_liq_volume;
+}
+
+// ============================================================================
+// NEW: Kill condition checks from Oct 2025 crash analysis
+// ============================================================================
+
+inline std::optional<KillSignal> DeltaNeutralEnforcer::check_adl_risk() {
+    // ADL (Auto-Deleveraging) risk check
+    // In Oct 2025, ADL forcibly closed profitable short hedges, leaving
+    // traders with naked long exposure during a crash
+    //
+    // ADL queue position: 0 = safe, 1 = you're next to be ADL'd
+
+    double max_adl_position = 0;
+    std::string worst_venue;
+
+    for (const auto& [venue, position] : adl_queue_positions_) {
+        if (position > max_adl_position) {
+            max_adl_position = position;
+            worst_venue = venue;
+        }
+    }
+
+    // Warning at 70% up the queue
+    if (max_adl_position >= config_.adl_queue_warning &&
+        max_adl_position < config_.adl_queue_critical) {
+        stats_.warnings_issued++;
+        if (on_warning_) {
+            on_warning_("ADL risk warning on " + worst_venue + ": " +
+                std::to_string(max_adl_position * 100) + "% up queue", 0.7);
+        }
+    }
+
+    if (max_adl_position < config_.adl_queue_critical) {
+        return std::nullopt;
+    }
+
+    KillSignal signal;
+    signal.should_kill = true;
+    signal.reason = KillReason::ADL_RISK;
+    signal.detail = "ADL imminent on " + worst_venue + ": " +
+        std::to_string(max_adl_position * 100) + "% up queue. " +
+        "Profitable hedges may be forcibly closed.";
+    signal.urgency = 0.95;  // Very high - ADL removes your hedge instantly
+    signal.estimated_loss = compute_delta().total_long_notional * 0.1;  // Estimate 10% loss
+
+    return signal;
+}
+
+inline std::optional<KillSignal> DeltaNeutralEnforcer::check_stablecoin_depeg() {
+    // Stablecoin de-peg check (unified margin contagion)
+    // In Oct 2025, USDe traded at ~$0.60 on Binance while pegged elsewhere.
+    // This local pricing marked down collateral value, triggering portfolio-wide
+    // liquidations for traders who were theoretically hedged.
+
+    double max_depeg = 0;
+    std::string worst_stable;
+
+    for (const auto& [symbol, price] : stablecoin_prices_) {
+        double depeg = std::abs(1.0 - price);
+        if (depeg > max_depeg) {
+            max_depeg = depeg;
+            worst_stable = symbol;
+        }
+    }
+
+    // Warning at 0.5% off peg
+    if (max_depeg >= config_.stablecoin_depeg_warning &&
+        max_depeg < config_.stablecoin_depeg_critical) {
+        stats_.warnings_issued++;
+        if (on_warning_) {
+            on_warning_(worst_stable + " de-peg warning: " +
+                std::to_string(max_depeg * 100) + "% off peg", 0.6);
+        }
+    }
+
+    if (max_depeg < config_.stablecoin_depeg_critical) {
+        return std::nullopt;
+    }
+
+    KillSignal signal;
+    signal.should_kill = true;
+    signal.reason = KillReason::STABLECOIN_DEPEG;
+    signal.detail = worst_stable + " de-pegged " +
+        std::to_string(max_depeg * 100) + "%. " +
+        "Unified margin contagion risk - collateral marked down locally.";
+    signal.urgency = 0.92;  // Very high - can trigger cascade liquidations
+    signal.estimated_loss = current_equity_ * max_depeg;  // Collateral haircut
+
+    return signal;
+}
+
+inline std::optional<KillSignal> DeltaNeutralEnforcer::check_liquidation_cascade() {
+    // Liquidation cascade detection
+    // Oct 2025 saw $19B in liquidations and $65B OI wipeout.
+    // High leverage + extreme OI skew + spiking liq volume = cascade
+
+    if (total_oi_ <= 0 || avg_liquidation_volume_ <= 0) {
+        return std::nullopt;  // No data
+    }
+
+    // Check OI skew (80%+ long = danger in downturn)
+    double oi_skew = (total_oi_ > 0) ?
+        std::max(long_oi_, short_oi_) / total_oi_ : 0;
+
+    // Check liquidation volume spike
+    double liq_ratio = (avg_liquidation_volume_ > 0) ?
+        liquidation_volume_24h_ / avg_liquidation_volume_ : 0;
+
+    bool skew_critical = oi_skew >= config_.oi_skew_critical;
+    bool liq_spike = liq_ratio >= config_.liquidation_volume_spike;
+
+    // Warning if either condition is elevated
+    if ((skew_critical || liq_spike) && !(skew_critical && liq_spike)) {
+        stats_.warnings_issued++;
+        if (on_warning_) {
+            std::string msg = "Cascade risk: ";
+            if (skew_critical) msg += "OI skew " + std::to_string(oi_skew * 100) + "%. ";
+            if (liq_spike) msg += "Liq volume " + std::to_string(liq_ratio) + "x normal.";
+            on_warning_(msg, 0.65);
+        }
+    }
+
+    // Kill only if BOTH conditions are critical (high skew + liq spike)
+    if (!(skew_critical && liq_spike)) {
+        return std::nullopt;
+    }
+
+    KillSignal signal;
+    signal.should_kill = true;
+    signal.reason = KillReason::LIQUIDATION_CASCADE;
+    signal.detail = "Liquidation cascade detected: OI skew " +
+        std::to_string(oi_skew * 100) + "%, liq volume " +
+        std::to_string(liq_ratio) + "x normal. Expect 90%+ liquidity loss.";
+    signal.urgency = 0.85;
+    signal.estimated_loss = current_equity_ * 0.15;  // Estimate 15% slippage in cascade
+
+    return signal;
 }
 
 }  // namespace arb
