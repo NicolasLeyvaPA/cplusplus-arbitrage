@@ -449,7 +449,9 @@ void ExecutionEngine::simulate_fill(Order& order) {
     fill.price = adverse_price;  // ADVERSARIAL: slippage applied
     fill.size = order.original_size * fill_ratio;
     fill.notional = fill.price * fill.size;
-    fill.fee = fill.notional * 0.02 + 0.05;  // 2% + $0.05 estimated gas - ADVERSARIAL
+    // Correct Polymarket parabolic fee: fee = price * (1 - price) * 0.0624 per share
+    double per_share_fee = fill.price * (1.0 - fill.price) * 0.0624;
+    fill.fee = per_share_fee * fill.size;
     fill.fill_time = now();
     fill.exchange_time_ms = now_ms();
 

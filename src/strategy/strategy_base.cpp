@@ -21,21 +21,33 @@ UnderpricingStrategy::UnderpricingStrategy(const StrategyConfig& config)
     spdlog::info("UnderpricingStrategy initialized with min_edge_cents={}", config.min_edge_cents);
 }
 
-double UnderpricingStrategy::calculate_edge(double yes_ask, double no_ask, double fee_rate_bps) const {
+double UnderpricingStrategy::calculate_position_fee(double price) {
+    // Polymarket's parabolic fee formula (from their fee table):
+    // fee = price * (1 - price) * FEE_RATE
+    // Maximum fee at price = $0.50 (~$0.0156 per share)
+    // Zero fee at extremes ($0.01 and $0.99)
+    return price * (1.0 - price) * POLYMARKET_FEE_RATE;
+}
+
+double UnderpricingStrategy::calculate_edge(double yes_ask, double no_ask, double /* fee_rate_bps - unused */) const {
     // In a binary market, if we buy YES at yes_ask and NO at no_ask,
     // we pay: yes_ask + no_ask
     // We receive: 1.0 (guaranteed, one side settles to $1)
-    // Fee on winnings: fee_rate_bps / 10000 on the $1 payout
+    //
+    // CORRECT FEE CALCULATION (Polymarket parabolic formula):
+    // Fee is charged per position based on: price * (1 - price) * 6.24%
+    // We pay fees on BOTH the YES and NO positions!
 
     double total_cost = yes_ask + no_ask;
     double payout = 1.0;
 
-    // Fee is applied to winnings, which is (payout - losing_side_cost)
-    // Simplification: max fee would be on full payout
-    double fee = payout * (fee_rate_bps / 10000.0);
+    // Calculate fees for both positions
+    double yes_fee = calculate_position_fee(yes_ask);
+    double no_fee = calculate_position_fee(no_ask);
+    double total_fees = yes_fee + no_fee;
 
-    double net_payout = payout - fee;
-    double edge = net_payout - total_cost;
+    // Net edge = payout - cost - fees
+    double edge = payout - total_cost - total_fees;
 
     // Convert to cents (multiply by 100)
     return edge * 100.0;
@@ -64,8 +76,11 @@ std::vector<Signal> UnderpricingStrategy::evaluate(
 
     if (!yes_ask || !no_ask) return signals;
 
-    // Calculate edge
-    double edge_cents = calculate_edge(yes_ask->price, no_ask->price, POLYMARKET_FEE_BPS);
+    // Calculate edge with correct parabolic fee formula
+    double edge_cents = calculate_edge(yes_ask->price, no_ask->price, 0 /* unused */);
+    double yes_fee = calculate_position_fee(yes_ask->price);
+    double no_fee = calculate_position_fee(no_ask->price);
+    double total_fees = yes_fee + no_fee;
 
     // Check spread constraints
     double yes_spread = book.yes_book().spread();
@@ -91,9 +106,9 @@ std::vector<Signal> UnderpricingStrategy::evaluate(
         yes_signal.expected_edge = edge_cents;
         yes_signal.confidence = std::min(1.0, edge_cents / 10.0);  // Higher edge = higher confidence
         yes_signal.generated_at = now_time;
-        yes_signal.reason = fmt::format("Sum of asks = {:.4f} + {:.4f} = {:.4f} < 1.0, edge = {:.2f} cents",
+        yes_signal.reason = fmt::format("YES={:.2f}+NO={:.2f}={:.4f}, fees={:.4f}, edge={:.2f}c",
                                         yes_ask->price, no_ask->price,
-                                        yes_ask->price + no_ask->price, edge_cents);
+                                        yes_ask->price + no_ask->price, total_fees, edge_cents);
 
         Signal no_signal;
         no_signal.strategy_name = name_;

@@ -247,25 +247,39 @@ std::vector<Market> PolymarketClient::fetch_markets() {
     return markets;
 }
 
-std::vector<Market> PolymarketClient::fetch_btc_markets() {
+std::vector<Market> PolymarketClient::fetch_filtered_markets(const std::string& pattern) {
     auto all_markets = fetch_markets();
-    std::vector<Market> btc_markets;
 
-    // Filter for BTC 15-minute markets
-    // Note: std::regex::icase handles case insensitivity (no (?i) needed)
-    std::regex btc_pattern("btc.*15.*min|bitcoin.*15.*min|btc.*up.*down|bitcoin.*up.*down",
-                           std::regex::icase);
-
-    for (const auto& market : all_markets) {
-        if (std::regex_search(market.question, btc_pattern) ||
-            std::regex_search(market.slug, btc_pattern)) {
-            btc_markets.push_back(market);
-            spdlog::info("Found BTC market: {}", market.question);
+    // If pattern is empty, return ALL active markets (for maximum opportunity discovery)
+    if (pattern.empty()) {
+        spdlog::info("No filter pattern - returning all {} active markets for S2 strategy", all_markets.size());
+        for (const auto& market : all_markets) {
+            spdlog::debug("Available market: {}", market.question);
         }
+        return all_markets;
     }
 
-    spdlog::info("Found {} BTC-related markets", btc_markets.size());
-    return btc_markets;
+    std::vector<Market> filtered_markets;
+
+    try {
+        // Note: std::regex::icase handles case insensitivity
+        std::regex filter_pattern(pattern, std::regex::icase);
+
+        for (const auto& market : all_markets) {
+            if (std::regex_search(market.question, filter_pattern) ||
+                std::regex_search(market.slug, filter_pattern)) {
+                filtered_markets.push_back(market);
+                spdlog::info("Found matching market: {}", market.question);
+            }
+        }
+    } catch (const std::regex_error& e) {
+        spdlog::error("Invalid regex pattern '{}': {}", pattern, e.what());
+        return all_markets;  // Fallback to all markets on regex error
+    }
+
+    spdlog::info("Filter '{}' matched {} of {} total markets",
+                 pattern, filtered_markets.size(), all_markets.size());
+    return filtered_markets;
 }
 
 void PolymarketClient::fetch_order_book(const std::string& token_id, OrderBook& book) {

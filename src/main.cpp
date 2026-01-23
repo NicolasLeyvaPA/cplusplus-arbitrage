@@ -133,6 +133,7 @@ int main(int argc, char* argv[]) {
     bool paper_mode = false;
     bool live_mode = false;
     bool show_version = false;
+    bool list_markets = false;
 
     app.add_option("-c,--config", config_path, "Path to configuration file")
         ->check(CLI::ExistingFile);
@@ -140,6 +141,7 @@ int main(int argc, char* argv[]) {
     app.add_flag("--paper", paper_mode, "Paper trading mode: simulated execution");
     app.add_flag("--live", live_mode, "Live trading mode (requires explicit confirmation)");
     app.add_flag("-v,--version", show_version, "Show version information");
+    app.add_flag("--list-markets", list_markets, "List all available Polymarket markets and exit");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -281,15 +283,45 @@ int main(int argc, char* argv[]) {
     // Wait for initial connection
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
-    // Fetch and subscribe to markets
-    spdlog::info("Fetching BTC markets...");
-    auto btc_markets = polymarket_client->fetch_btc_markets();
+    // Handle --list-markets flag
+    if (list_markets) {
+        spdlog::info("Fetching all available Polymarket markets...");
+        auto all_markets = polymarket_client->fetch_markets();
 
-    if (btc_markets.empty()) {
-        spdlog::warn("No BTC markets found. Will continue monitoring...");
+        std::cout << "\n╔═══════════════════════════════════════════════════════════════════════════════╗\n";
+        std::cout << "║  Available Polymarket Markets (" << all_markets.size() << " total)                                  ║\n";
+        std::cout << "╚═══════════════════════════════════════════════════════════════════════════════╝\n\n";
+
+        for (const auto& m : all_markets) {
+            std::cout << "• " << m.question << "\n";
+            std::cout << "  Slug: " << m.slug << "\n";
+            std::cout << "  ID: " << m.condition_id.substr(0, 20) << "...\n";
+            std::cout << "  YES token: " << m.yes_outcome.token_id.substr(0, 16) << "...\n";
+            std::cout << "  NO token:  " << m.no_outcome.token_id.substr(0, 16) << "...\n\n";
+        }
+
+        std::cout << "To trade specific markets, set 'market_pattern' in configs/bot.json\n";
+        std::cout << "Example patterns:\n";
+        std::cout << "  \"\"                  - Trade ALL markets (S2 underpricing on any binary)\n";
+        std::cout << "  \"bitcoin|btc|eth\"   - Trade crypto-related markets\n";
+        std::cout << "  \"president|election\" - Trade political markets\n";
+
+        binance_client->disconnect();
+        polymarket_client->disconnect();
+        return 0;
+    }
+
+    // Fetch and subscribe to markets using config pattern
+    spdlog::info("Fetching markets with pattern: '{}'", config.market_pattern.empty() ? "(all)" : config.market_pattern);
+    auto markets = polymarket_client->fetch_filtered_markets(config.market_pattern);
+
+    if (markets.empty()) {
+        spdlog::warn("No markets found matching pattern '{}'. Use --list-markets to see available options.",
+                     config.market_pattern);
+        spdlog::warn("Tip: Set market_pattern to \"\" in config to trade all markets with S2 underpricing.");
     } else {
-        spdlog::info("Found {} BTC markets", btc_markets.size());
-        for (const auto& market : btc_markets) {
+        spdlog::info("Found {} markets to monitor", markets.size());
+        for (const auto& market : markets) {
             polymarket_client->subscribe_market(market.yes_outcome.token_id);
             polymarket_client->subscribe_market(market.no_outcome.token_id);
 
@@ -320,7 +352,7 @@ int main(int argc, char* argv[]) {
         Timestamp now_time = now();
 
         // Evaluate strategies for each market
-        for (const auto& market : btc_markets) {
+        for (const auto& market : markets) {
             auto* book = polymarket_client->get_market_book(market.condition_id);
             if (!book || !book->has_liquidity()) {
                 continue;

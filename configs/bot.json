@@ -50,5 +50,5 @@
   "state_snapshot_path": "./data/state.json",
 
   "market_slugs": [],
-  "market_pattern": "btc.*15m|bitcoin.*up.*down"
+  "market_pattern": ""
 }

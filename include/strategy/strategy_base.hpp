@@ -65,9 +65,15 @@ public:
     // Check if profitable
     bool is_profitable(double edge) const;
 
+    // Calculate fee for a single position using Polymarket's parabolic formula
+    // Fee = price * (1 - price) * FEE_RATE
+    static double calculate_position_fee(double price);
+
 private:
-    // Fee calculation constants
-    static constexpr double POLYMARKET_FEE_BPS = 200.0;  // 2% fee on winnings
+    // Polymarket fee rate constant (derived from fee table: ~6.24% at p=0.50)
+    // fee = price * (1 - price) * FEE_RATE
+    // At $0.50: 0.50 * 0.50 * 0.0624 = $0.0156 (matches table)
+    static constexpr double POLYMARKET_FEE_RATE = 0.0624;
 };
 
 /**
