@@ -97,6 +97,7 @@ set(LIB_SOURCES
     src/utils/time_utils.cpp
     src/utils/metrics.cpp
     src/persistence/trade_ledger.cpp
+    src/arbitrage/multi_exchange_scanner.cpp
 )
 
 # Create static library
