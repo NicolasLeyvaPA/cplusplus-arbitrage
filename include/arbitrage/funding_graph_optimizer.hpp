@@ -210,15 +210,18 @@ struct GraphAllocation {
     std::string reason;
 };
 
+// Config struct defined outside class for default parameter compatibility
+struct FundingGraphOptimizerConfig {
+    double max_position_per_exchange = 0.25;  // Fraction of capital
+    double max_total_leverage = 3.0;          // Total leverage across all exchanges
+    double risk_aversion = 1.0;               // Higher = more conservative
+    double min_spread_threshold = 0.0001;     // 0.01% minimum
+    double exchange_risk_weight = 0.1;        // How much to penalize exchange risk
+};
+
 class FundingGraphOptimizer {
 public:
-    struct Config {
-        double max_position_per_exchange = 0.25;  // Fraction of capital
-        double max_total_leverage = 3.0;          // Total leverage across all exchanges
-        double risk_aversion = 1.0;               // Higher = more conservative
-        double min_spread_threshold = 0.0001;     // 0.01% minimum
-        double exchange_risk_weight = 0.1;        // How much to penalize exchange risk
-    };
+    using Config = FundingGraphOptimizerConfig;
 
     explicit FundingGraphOptimizer(const Config& config = Config())
         : config_(config) {}
@@ -496,23 +499,26 @@ struct ExitDecision {
     std::string reason;
 };
 
+// Config struct defined outside class for default parameter compatibility
+struct FundingArbDecisionEngineConfig {
+    // Entry thresholds
+    double min_expected_annual_return = 0.15;   // 15% minimum
+    double min_sharpe = 2.0;                    // Minimum Sharpe ratio
+    double min_persistence = 0.6;              // 60% chance funding persists
+
+    // Exit thresholds
+    double exit_spread_threshold = 0.00005;    // Exit if spread < 0.005%
+    double max_basis_divergence = 0.005;       // 0.5%
+    double max_drawdown = 0.03;                // 3%
+
+    // Sizing
+    double kelly_fraction = 0.5;               // Half-Kelly
+    double max_position_size = 0.5;            // Max 50% of capital
+};
+
 class FundingArbDecisionEngine {
 public:
-    struct Config {
-        // Entry thresholds
-        double min_expected_annual_return = 0.15;   // 15% minimum
-        double min_sharpe = 2.0;                    // Minimum Sharpe ratio
-        double min_persistence = 0.6;              // 60% chance funding persists
-
-        // Exit thresholds
-        double exit_spread_threshold = 0.00005;    // Exit if spread < 0.005%
-        double max_basis_divergence = 0.005;       // 0.5%
-        double max_drawdown = 0.03;                // 3%
-
-        // Sizing
-        double kelly_fraction = 0.5;               // Half-Kelly
-        double max_position_size = 0.5;            // Max 50% of capital
-    };
+    using Config = FundingArbDecisionEngineConfig;
 
     explicit FundingArbDecisionEngine(const Config& config = Config())
         : config_(config) {}
