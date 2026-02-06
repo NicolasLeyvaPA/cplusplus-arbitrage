@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 namespace arb {
+namespace db {
 
 // ============================================================================
 // UTILITY FUNCTIONS
@@ -1215,4 +1216,5 @@ void SessionDatabase::export_pnl_snapshots_csv(const std::string& session_id, co
     spdlog::info("Exported {} PnL snapshots to {}", snapshots.size(), path);
 }
 
+}  // namespace db
 }  // namespace arb

@@ -1,229 +1,129 @@
 #include "position/position_manager.hpp"
 #include <spdlog/spdlog.h>
+#include <cmath>
 
 namespace arb {
 
-void PositionManager::record_fill(const Fill& fill) {
+void PositionManager::open_position(const std::string& symbol, const DeltaNeutralPosition& pos) {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    auto it = positions_.find(fill.token_id);
-
-    if (it == positions_.end()) {
-        // Create new position
-        Position pos;
-        pos.token_id = fill.token_id;
-        pos.market_id = fill.market_id;
-        pos.first_entry = now();
-        positions_[fill.token_id] = pos;
-        it = positions_.find(fill.token_id);
-    }
-
-    Position& pos = it->second;
-    apply_fill_to_position(pos, fill);
-
-    total_fees_ += fill.fee;
-
-    spdlog::debug("Position updated: {} size={:.2f} avg_price={:.4f} realized_pnl={:.2f}",
-                 fill.token_id, pos.size, pos.avg_entry_price, pos.realized_pnl);
+    positions_[symbol] = pos;
+    spdlog::info("Position opened: {} spot={:.6f} futures={:.6f}",
+                 symbol, pos.spot_size, pos.futures_size);
 }
 
-void PositionManager::apply_fill_to_position(Position& pos, const Fill& fill) {
-    double signed_size = (fill.side == Side::BUY) ? fill.size : -fill.size;
-    double fill_notional = fill.price * fill.size;
-
-    if ((pos.size >= 0 && fill.side == Side::BUY) ||
-        (pos.size <= 0 && fill.side == Side::SELL)) {
-        // Adding to position
-        double new_size = pos.size + signed_size;
-        if (std::abs(new_size) > 0.0001) {
-            pos.avg_entry_price = (pos.cost_basis + fill_notional) / std::abs(new_size);
-        }
-        pos.cost_basis += fill_notional;
-        pos.size = new_size;
-    } else {
-        // Reducing position - calculate P&L based on position direction
-        double reduction = std::min(std::abs(signed_size), std::abs(pos.size));
-        double realized;
-
-        if (pos.size > 0) {
-            // Closing LONG position by selling
-            // Profit = (sell_price - entry_price) * shares
-            realized = reduction * (fill.price - pos.avg_entry_price);
-        } else {
-            // Closing SHORT position by buying
-            // Profit = (entry_price - buy_price) * shares
-            realized = reduction * (pos.avg_entry_price - fill.price);
-        }
-
-        pos.realized_pnl += realized - fill.fee;
-        total_realized_pnl_ += realized - fill.fee;
-        daily_realized_pnl_ += realized - fill.fee;
-
-        pos.size += signed_size;
-        pos.cost_basis = std::abs(pos.size) * pos.avg_entry_price;
+void PositionManager::update_spot_fill(const std::string& symbol, Size size, Price price, double fee) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto& pos = positions_[symbol];
+    pos.symbol = symbol;
+    pos.spot_size += size;
+    pos.spot_notional += size * price;
+    if (pos.spot_size != 0) {
+        pos.spot_avg_entry = pos.spot_notional / pos.spot_size;
     }
-
-    pos.total_fees += fill.fee;
-    pos.last_update = now();
+    pos.total_fees += fee;
+    pos.last_update_ms = static_cast<uint64_t>(now_ms());
 }
 
-void PositionManager::mark_to_market(const std::string& token_id, Price mark_price) {
+void PositionManager::update_futures_fill(const std::string& symbol, Size size, Price price, double fee) {
     std::lock_guard<std::mutex> lock(mutex_);
+    auto& pos = positions_[symbol];
+    pos.symbol = symbol;
+    pos.futures_size += size;
+    pos.futures_notional += size * price;
+    if (pos.futures_size != 0) {
+        pos.futures_avg_entry = std::abs(pos.futures_notional / pos.futures_size);
+    }
+    pos.total_fees += fee;
+    pos.last_update_ms = static_cast<uint64_t>(now_ms());
+}
 
-    auto it = positions_.find(token_id);
+void PositionManager::close_position(const std::string& symbol) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = positions_.find(symbol);
+    if (it != positions_.end()) {
+        spdlog::info("Position closed: {} PnL={:.2f}", symbol, it->second.total_pnl());
+        positions_.erase(it);
+    }
+}
+
+void PositionManager::record_funding(const std::string& symbol, double amount) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = positions_.find(symbol);
+    if (it != positions_.end()) {
+        it->second.funding_collected += amount;
+        it->second.funding_periods++;
+        spdlog::info("Funding received: {} ${:.4f} (total: ${:.4f}, periods: {})",
+                     symbol, amount, it->second.funding_collected, it->second.funding_periods);
+    }
+}
+
+void PositionManager::mark_to_market(const std::string& symbol, Price spot_price, Price futures_price) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto it = positions_.find(symbol);
     if (it == positions_.end()) return;
 
-    Position& pos = it->second;
-    pos.last_mark_price = mark_price;
-
-    if (std::abs(pos.size) > 0.0001) {
-        pos.unrealized_pnl = pos.size * (mark_price - pos.avg_entry_price);
-    } else {
-        pos.unrealized_pnl = 0.0;
-    }
+    auto& pos = it->second;
+    double spot_pnl = pos.spot_size * (spot_price - pos.spot_avg_entry);
+    double futures_pnl = pos.futures_size * (futures_price - pos.futures_avg_entry);
+    pos.unrealized_pnl = spot_pnl + futures_pnl;
+    pos.last_update_ms = static_cast<uint64_t>(now_ms());
 }
 
-std::optional<Position> PositionManager::get_position(const std::string& token_id) const {
+std::optional<DeltaNeutralPosition> PositionManager::get_position(const std::string& symbol) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = positions_.find(token_id);
-    if (it != positions_.end()) {
-        return it->second;
-    }
+    auto it = positions_.find(symbol);
+    if (it != positions_.end()) return it->second;
     return std::nullopt;
 }
 
-std::vector<Position> PositionManager::get_all_positions() const {
+std::map<std::string, DeltaNeutralPosition> PositionManager::get_all_positions() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<Position> result;
-    for (const auto& [id, pos] : positions_) {
-        result.push_back(pos);
+    return positions_;
+}
+
+std::vector<std::string> PositionManager::get_open_symbols() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::string> symbols;
+    for (const auto& [sym, pos] : positions_) {
+        if (pos.is_open()) symbols.push_back(sym);
     }
-    return result;
+    return symbols;
 }
 
-std::vector<Position> PositionManager::get_open_positions() const {
+double PositionManager::total_pnl() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<Position> result;
-    for (const auto& [id, pos] : positions_) {
-        if (pos.is_open()) {
-            result.push_back(pos);
-        }
-    }
-    return result;
-}
-
-std::vector<Position> PositionManager::get_positions_for_market(const std::string& market_id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    std::vector<Position> result;
-    for (const auto& [id, pos] : positions_) {
-        if (pos.market_id == market_id) {
-            result.push_back(pos);
-        }
-    }
-    return result;
-}
-
-Notional PositionManager::total_realized_pnl() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return total_realized_pnl_;
-}
-
-Notional PositionManager::total_unrealized_pnl() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    Notional total = 0.0;
-    for (const auto& [id, pos] : positions_) {
-        total += pos.unrealized_pnl;
+    double total = 0;
+    for (const auto& [_, pos] : positions_) {
+        total += pos.total_pnl();
     }
     return total;
 }
 
-Notional PositionManager::total_pnl() const {
-    return total_realized_pnl() + total_unrealized_pnl();
-}
-
-Notional PositionManager::total_fees() const {
+double PositionManager::total_funding() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return total_fees_;
-}
-
-Notional PositionManager::gross_exposure() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    Notional total = 0.0;
-    for (const auto& [id, pos] : positions_) {
-        total += std::abs(pos.market_value());
+    double total = 0;
+    for (const auto& [_, pos] : positions_) {
+        total += pos.funding_collected;
     }
     return total;
 }
 
-Notional PositionManager::net_exposure() const {
+double PositionManager::total_exposure() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    Notional total = 0.0;
-    for (const auto& [id, pos] : positions_) {
-        total += pos.market_value();
+    double total = 0;
+    for (const auto& [_, pos] : positions_) {
+        total += pos.total_notional();
     }
     return total;
 }
 
-void PositionManager::record_settlement(const std::string& market_id,
-                                         const std::string& winning_token_id) {
+int PositionManager::open_position_count() const {
     std::lock_guard<std::mutex> lock(mutex_);
-
-    for (auto& [id, pos] : positions_) {
-        if (pos.market_id == market_id) {
-            if (id == winning_token_id) {
-                // Position settles to $1 per share
-                double pnl = pos.size * (1.0 - pos.avg_entry_price) - pos.total_fees;
-                pos.realized_pnl += pnl;
-                total_realized_pnl_ += pnl;
-            } else {
-                // Position settles to $0
-                double pnl = -pos.cost_basis - pos.total_fees;
-                pos.realized_pnl += pnl;
-                total_realized_pnl_ += pnl;
-            }
-
-            pos.size = 0.0;
-            pos.cost_basis = 0.0;
-            pos.unrealized_pnl = 0.0;
-            pos.last_update = now();
-
-            spdlog::info("Settlement recorded: {} winner={} pnl={:.2f}",
-                        market_id, winning_token_id, pos.realized_pnl);
-        }
+    int count = 0;
+    for (const auto& [_, pos] : positions_) {
+        if (pos.is_open()) count++;
     }
-}
-
-void PositionManager::reset_daily_pnl() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    daily_realized_pnl_ = 0.0;
-}
-
-PositionManager::Snapshot PositionManager::create_snapshot() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    Snapshot snap;
-    for (const auto& [id, pos] : positions_) {
-        snap.positions.push_back(pos);
-    }
-    snap.realized_pnl = total_realized_pnl_;
-    snap.total_fees = total_fees_;
-    snap.timestamp = wall_now();
-
-    return snap;
-}
-
-void PositionManager::restore_from_snapshot(const Snapshot& snapshot) {
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    positions_.clear();
-    for (const auto& pos : snapshot.positions) {
-        positions_[pos.token_id] = pos;
-    }
-
-    total_realized_pnl_ = snapshot.realized_pnl;
-    total_fees_ = snapshot.total_fees;
-
-    spdlog::info("Restored {} positions from snapshot", positions_.size());
+    return count;
 }
 
 } // namespace arb

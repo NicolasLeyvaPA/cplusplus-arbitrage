@@ -5,8 +5,9 @@ cmake-build-*/
 # Compiled executables
 demo_simulator
 dailyarb
+delta_neutral_bot
 replay_tool
-tests
+/tests
 
 # Object files
 *.o

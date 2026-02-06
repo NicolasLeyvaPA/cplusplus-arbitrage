@@ -1,25 +1,25 @@
 #pragma once
 
-#include <string>
 #include <chrono>
+#include <string>
+#include <vector>
+#include <map>
 #include <optional>
-#include <variant>
+#include <cmath>
 #include <cstdint>
 
 namespace arb {
 
-// Time types
+// ============================================================================
+// TIME TYPES
+// ============================================================================
+
 using Timestamp = std::chrono::time_point<std::chrono::steady_clock>;
 using WallClock = std::chrono::time_point<std::chrono::system_clock>;
 using Duration = std::chrono::nanoseconds;
 
-inline Timestamp now() {
-    return std::chrono::steady_clock::now();
-}
-
-inline WallClock wall_now() {
-    return std::chrono::system_clock::now();
-}
+inline Timestamp now() { return std::chrono::steady_clock::now(); }
+inline WallClock wall_now() { return std::chrono::system_clock::now(); }
 
 inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -27,75 +27,192 @@ inline int64_t now_ms() {
     ).count();
 }
 
-// Price type (in cents for precision, 1.0 = 100 cents = $1.00)
-using Price = double;
-using Size = double;
-using Notional = double;
+// ============================================================================
+// VALUE TYPES
+// ============================================================================
 
-// Side enum
-enum class Side {
-    BUY,
-    SELL
+using Price = double;
+using Size = double;      // Quantity in base asset (e.g., BTC)
+using Notional = double;  // Price * Size in quote asset (e.g., USDT)
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum class Side { BUY, SELL };
+enum class OrderType { MARKET, LIMIT, LIMIT_MAKER };
+enum class TimeInForce { GTC, IOC, FOK };
+enum class OrderStatus { NEW, PARTIALLY_FILLED, FILLED, CANCELED, REJECTED, EXPIRED };
+enum class TradingMode { DRY_RUN, PAPER, LIVE };
+enum class MarketType { SPOT, FUTURES };
+enum class PositionSide { LONG, SHORT, BOTH };
+enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR };
+
+// ============================================================================
+// MARKET DATA
+// ============================================================================
+
+struct Ticker {
+    std::string symbol;
+    Price bid{0};
+    Price ask{0};
+    Size bid_qty{0};
+    Size ask_qty{0};
+    uint64_t timestamp_ms{0};
+
+    Price mid() const { return (bid + ask) / 2.0; }
+    Price spread() const { return ask - bid; }
+    double spread_bps() const {
+        auto m = mid();
+        return m > 0 ? (ask - bid) / m * 10000.0 : 0;
+    }
 };
 
-inline std::string side_to_string(Side s) {
+struct FundingInfo {
+    std::string symbol;
+    double current_rate{0};      // Per-period rate (e.g., 0.0001 = 0.01%)
+    double predicted_rate{0};    // Next predicted rate
+    Price mark_price{0};
+    Price index_price{0};
+    uint64_t next_funding_time_ms{0};
+    uint64_t timestamp_ms{0};
+
+    // 3 funding periods per day * 365 days
+    double annualized_rate() const { return current_rate * 3.0 * 365.0 * 100.0; }
+};
+
+struct BasisInfo {
+    std::string symbol;
+    Price spot_mid{0};
+    Price futures_mid{0};
+    double basis{0};             // (futures - spot) / spot
+    double basis_bps{0};         // basis * 10000
+    double annualized_basis{0};
+    uint64_t timestamp_ms{0};
+};
+
+// ============================================================================
+// ACCOUNT
+// ============================================================================
+
+struct AccountBalance {
+    double total_balance{0};
+    double available_balance{0};
+    double unrealized_pnl{0};
+    double margin_balance{0};
+    std::map<std::string, double> asset_balances;
+};
+
+// ============================================================================
+// DELTA-NEUTRAL POSITION
+// ============================================================================
+
+struct DeltaNeutralPosition {
+    std::string symbol;
+
+    // Spot leg
+    Size spot_size{0};           // Positive = long
+    Price spot_avg_entry{0};
+    Notional spot_notional{0};
+
+    // Futures leg
+    Size futures_size{0};        // Negative = short
+    Price futures_avg_entry{0};
+    Notional futures_notional{0};
+
+    // P&L tracking
+    double funding_collected{0};
+    int funding_periods{0};
+    double realized_pnl{0};
+    double unrealized_pnl{0};
+    double total_fees{0};
+
+    // Timestamps
+    uint64_t entry_time_ms{0};
+    uint64_t last_update_ms{0};
+
+    // Computed properties
+    double net_delta() const { return spot_size + futures_size; }
+
+    bool is_balanced(double tolerance_pct = 1.0) const {
+        if (spot_size == 0) return futures_size == 0;
+        return std::abs(net_delta()) < std::abs(spot_size) * (tolerance_pct / 100.0);
+    }
+
+    double total_pnl() const {
+        return realized_pnl + unrealized_pnl + funding_collected - total_fees;
+    }
+
+    Notional total_notional() const {
+        return std::abs(spot_notional) + std::abs(futures_notional);
+    }
+
+    bool is_open() const { return spot_size != 0 || futures_size != 0; }
+};
+
+// ============================================================================
+// SIGNALS
+// ============================================================================
+
+enum class SignalType { OPEN, CLOSE, REBALANCE };
+
+struct DeltaNeutralSignal {
+    SignalType type{SignalType::OPEN};
+    std::string symbol;
+    Size target_size{0};
+    double expected_funding_rate{0};
+    double expected_annual_yield{0};
+    double confidence{0};
+    std::string reason;
+};
+
+// ============================================================================
+// ORDER REQUEST / RESPONSE
+// ============================================================================
+
+struct OrderRequest {
+    std::string symbol;
+    MarketType market{MarketType::SPOT};
+    Side side{Side::BUY};
+    OrderType type{OrderType::MARKET};
+    TimeInForce tif{TimeInForce::GTC};
+    Size quantity{0};
+    Price price{0};
+    std::string client_order_id;
+    bool reduce_only{false};
+};
+
+struct OrderResponse {
+    std::string order_id;
+    std::string client_order_id;
+    std::string symbol;
+    OrderStatus status{OrderStatus::NEW};
+    Side side{Side::BUY};
+    Price price{0};
+    Size original_qty{0};
+    Size executed_qty{0};
+    Notional cumulative_quote_qty{0};
+    uint64_t timestamp_ms{0};
+    std::string error_message;
+
+    bool success() const {
+        return error_message.empty() && status != OrderStatus::REJECTED;
+    }
+};
+
+// ============================================================================
+// INLINE STRING CONVERSIONS
+// ============================================================================
+
+inline std::string to_string(Side s) {
     return s == Side::BUY ? "BUY" : "SELL";
 }
 
-// Order types
-enum class OrderType {
-    LIMIT,
-    MARKET,
-    IOC,  // Immediate or Cancel
-    FOK,  // Fill or Kill
-    GTC   // Good Till Cancel
-};
-
-inline std::string order_type_to_string(OrderType t) {
-    switch (t) {
-        case OrderType::LIMIT: return "LIMIT";
-        case OrderType::MARKET: return "MARKET";
-        case OrderType::IOC: return "IOC";
-        case OrderType::FOK: return "FOK";
-        case OrderType::GTC: return "GTC";
-    }
-    return "UNKNOWN";
+inline std::string to_string(MarketType m) {
+    return m == MarketType::SPOT ? "SPOT" : "FUTURES";
 }
 
-// Order state
-enum class OrderState {
-    PENDING,      // Created but not sent
-    SENT,         // Sent to exchange
-    ACKNOWLEDGED, // Exchange confirmed receipt
-    PARTIAL,      // Partially filled
-    FILLED,       // Fully filled
-    CANCELED,     // Canceled by user
-    REJECTED,     // Rejected by exchange
-    EXPIRED       // TTL expired
-};
-
-inline std::string order_state_to_string(OrderState s) {
-    switch (s) {
-        case OrderState::PENDING: return "PENDING";
-        case OrderState::SENT: return "SENT";
-        case OrderState::ACKNOWLEDGED: return "ACKNOWLEDGED";
-        case OrderState::PARTIAL: return "PARTIAL";
-        case OrderState::FILLED: return "FILLED";
-        case OrderState::CANCELED: return "CANCELED";
-        case OrderState::REJECTED: return "REJECTED";
-        case OrderState::EXPIRED: return "EXPIRED";
-    }
-    return "UNKNOWN";
-}
-
-// Trading mode
-enum class TradingMode {
-    DRY_RUN,  // Compute signals only, no orders
-    PAPER,    // Simulated execution
-    LIVE      // Real orders
-};
-
-inline std::string mode_to_string(TradingMode m) {
+inline std::string to_string(TradingMode m) {
     switch (m) {
         case TradingMode::DRY_RUN: return "DRY_RUN";
         case TradingMode::PAPER: return "PAPER";
@@ -104,16 +221,28 @@ inline std::string mode_to_string(TradingMode m) {
     return "UNKNOWN";
 }
 
-// Connection status
-enum class ConnectionStatus {
-    DISCONNECTED,
-    CONNECTING,
-    CONNECTED,
-    RECONNECTING,
-    ERROR
-};
+inline std::string to_string(OrderStatus s) {
+    switch (s) {
+        case OrderStatus::NEW: return "NEW";
+        case OrderStatus::PARTIALLY_FILLED: return "PARTIALLY_FILLED";
+        case OrderStatus::FILLED: return "FILLED";
+        case OrderStatus::CANCELED: return "CANCELED";
+        case OrderStatus::REJECTED: return "REJECTED";
+        case OrderStatus::EXPIRED: return "EXPIRED";
+    }
+    return "UNKNOWN";
+}
 
-inline std::string conn_status_to_string(ConnectionStatus s) {
+inline std::string to_string(SignalType t) {
+    switch (t) {
+        case SignalType::OPEN: return "OPEN";
+        case SignalType::CLOSE: return "CLOSE";
+        case SignalType::REBALANCE: return "REBALANCE";
+    }
+    return "UNKNOWN";
+}
+
+inline std::string to_string(ConnectionStatus s) {
     switch (s) {
         case ConnectionStatus::DISCONNECTED: return "DISCONNECTED";
         case ConnectionStatus::CONNECTING: return "CONNECTING";
@@ -124,92 +253,24 @@ inline std::string conn_status_to_string(ConnectionStatus s) {
     return "UNKNOWN";
 }
 
-// Price level in order book
-struct PriceLevel {
-    Price price{0.0};
-    Size size{0.0};
+inline Side side_from_string(const std::string& s) {
+    return s == "SELL" ? Side::SELL : Side::BUY;
+}
 
-    bool operator==(const PriceLevel& other) const {
-        return price == other.price && size == other.size;
-    }
-};
+inline OrderStatus order_status_from_str(const std::string& s) {
+    if (s == "NEW") return OrderStatus::NEW;
+    if (s == "PARTIALLY_FILLED") return OrderStatus::PARTIALLY_FILLED;
+    if (s == "FILLED") return OrderStatus::FILLED;
+    if (s == "CANCELED") return OrderStatus::CANCELED;
+    if (s == "REJECTED") return OrderStatus::REJECTED;
+    if (s == "EXPIRED") return OrderStatus::EXPIRED;
+    return OrderStatus::NEW;
+}
 
-// Market outcome (for binary markets)
-struct Outcome {
-    std::string token_id;
-    std::string name;  // e.g., "YES" or "NO"
-    Price best_bid{0.0};
-    Size bid_size{0.0};
-    Price best_ask{0.0};
-    Size ask_size{0.0};
-    Price last_trade_price{0.0};
-    Timestamp last_update;
-};
-
-// Market info
-struct Market {
-    std::string market_id;
-    std::string condition_id;
-    std::string question;
-    std::string slug;
-    Outcome yes_outcome;
-    Outcome no_outcome;
-    bool active{true};
-    WallClock end_date;
-    double fee_rate_bps{0.0};  // Fee rate in basis points
-};
-
-// BTC reference price
-struct BtcPrice {
-    Price bid{0.0};
-    Price ask{0.0};
-    Price mid{0.0};
-    Price last{0.0};
-    Timestamp timestamp;
-    int64_t exchange_time_ms{0};
-};
-
-// Trade execution record
-struct Fill {
-    std::string order_id;
-    std::string trade_id;
-    std::string market_id;
-    std::string token_id;
-    Side side;
-    Price price;
-    Size size;
-    Notional notional;
-    Notional fee;
-    Timestamp fill_time;
-    int64_t exchange_time_ms{0};
-};
-
-// Signal from strategy
-struct Signal {
-    std::string strategy_name;
-    std::string market_id;
-    std::string token_id;
-    Side side;
-    Price target_price;
-    Size target_size;
-    double expected_edge;  // Expected profit in cents
-    double confidence;     // 0.0 to 1.0
-    Timestamp generated_at;
-    std::string reason;
-};
-
-// Latency metrics
-struct LatencyMetrics {
-    Duration market_update_to_decision;
-    Duration decision_to_order_send;
-    Duration order_send_to_ack;
-    Duration ack_to_fill;
-    Duration total_round_trip;
-
-    // Aggregates
-    Duration p50_decision_to_send;
-    Duration p95_decision_to_send;
-    int64_t samples{0};
-};
+inline TradingMode trading_mode_from_str(const std::string& s) {
+    if (s == "LIVE" || s == "live") return TradingMode::LIVE;
+    if (s == "PAPER" || s == "paper") return TradingMode::PAPER;
+    return TradingMode::DRY_RUN;
+}
 
 } // namespace arb

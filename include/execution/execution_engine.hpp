@@ -1,118 +1,56 @@
 #pragma once
 
-#include <memory>
-#include <mutex>
-#include <map>
-#include <queue>
-#include <functional>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
 #include "common/types.hpp"
 #include "config/config.hpp"
-#include "execution/order.hpp"
-#include "risk/risk_manager.hpp"
-#include "market_data/polymarket_client.hpp"
+#include "exchange/binance_spot.hpp"
+#include "exchange/binance_futures.hpp"
+#include <map>
+#include <mutex>
+#include <atomic>
 
 namespace arb {
 
-/**
- * Execution engine handles order lifecycle management.
- * Supports dry-run, paper, and live modes.
- */
 class ExecutionEngine {
 public:
-    using FillCallback = std::function<void(const Fill&)>;
-    using OrderCallback = std::function<void(const Order&)>;
+    ExecutionEngine(BinanceSpot& spot,
+                    BinanceFutures& futures,
+                    TradingMode mode);
 
-    ExecutionEngine(
-        TradingMode mode,
-        std::shared_ptr<RiskManager> risk_manager,
-        std::shared_ptr<PolymarketClient> polymarket_client
-    );
-    ~ExecutionEngine();
-
-    // Submit order
-    struct SubmitResult {
-        bool accepted{false};
-        std::string order_id;
-        std::string rejection_reason;
+    struct ExecutionResult {
+        bool success{false};
+        OrderResponse spot_response;
+        OrderResponse futures_response;
+        std::string error;
     };
 
-    SubmitResult submit_order(const Signal& signal);
-    SubmitResult submit_paired_order(const Signal& yes_signal, const Signal& no_signal);
+    ExecutionResult open_delta_neutral(const std::string& symbol,
+                                       Size size,
+                                       Price spot_price,
+                                       Price futures_price);
 
-    // Order management
-    bool cancel_order(const std::string& order_id);
-    bool cancel_all();
+    ExecutionResult close_delta_neutral(const std::string& symbol,
+                                        const DeltaNeutralPosition& position);
 
-    // Query orders
-    std::optional<Order> get_order(const std::string& order_id) const;
-    std::vector<Order> get_open_orders() const;
-    std::vector<Order> get_orders_for_market(const std::string& market_id) const;
+    OrderResponse execute_order(const OrderRequest& req);
 
-    // Callbacks
-    void set_fill_callback(FillCallback cb) { on_fill_ = std::move(cb); }
-    void set_order_callback(OrderCallback cb) { on_order_update_ = std::move(cb); }
-
-    // Stats
-    int64_t orders_submitted() const { return orders_submitted_.load(); }
-    int64_t orders_filled() const { return orders_filled_.load(); }
-    int64_t orders_rejected() const { return orders_rejected_.load(); }
-
-    // Latency metrics
-    LatencyMetrics get_latency_metrics() const;
-
-    // Mode
     TradingMode mode() const { return mode_; }
 
 private:
+    OrderResponse paper_execute(const OrderRequest& req);
+    OrderResponse dry_run_execute(const OrderRequest& req);
+
+    BinanceSpot& spot_;
+    BinanceFutures& futures_;
     TradingMode mode_;
-    std::shared_ptr<RiskManager> risk_manager_;
-    std::shared_ptr<PolymarketClient> polymarket_client_;
 
-    FillCallback on_fill_;
-    OrderCallback on_order_update_;
-
-    // Order storage
-    mutable std::mutex orders_mutex_;
-    std::map<std::string, Order> orders_;
-    std::map<std::string, PairedOrder> paired_orders_;
-
-    // Stats
-    std::atomic<int64_t> orders_submitted_{0};
-    std::atomic<int64_t> orders_filled_{0};
-    std::atomic<int64_t> orders_rejected_{0};
-
-    // Latency tracking
-    mutable std::mutex latency_mutex_;
-    std::vector<Duration> decision_to_send_times_;
-    std::vector<Duration> send_to_ack_times_;
-
-    // Paper trading simulation
-    void simulate_fill(Order& order);
-    void process_paper_order(const std::string& order_id);
-
-    // Live order management
-    void send_live_order(Order& order);
-    void handle_order_response(const std::string& order_id,
-                               const PolymarketClient::OrderResponse& response);
-
-    // Order state transitions
-    void update_order_state(const std::string& order_id, OrderState new_state);
-    void record_fill(const std::string& order_id, const Fill& fill);
-
-    // Paired order handling
-    void process_paired_order(PairedOrder& pair);
-    void check_unwind_needed(PairedOrder& pair);
-
-    // Worker thread for paper simulation
-    std::atomic<bool> running_{true};
-    std::thread worker_thread_;
-    std::queue<std::string> pending_paper_orders_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
-    void paper_simulation_loop();
+    struct PaperState {
+        double usdt_balance{10000.0};
+        std::map<std::string, double> spot_holdings;
+        std::map<std::string, double> futures_positions;
+    };
+    PaperState paper_state_;
+    mutable std::mutex paper_mutex_;
+    std::atomic<uint64_t> next_order_id_{1};
 };
 
 } // namespace arb

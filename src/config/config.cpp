@@ -1,208 +1,146 @@
 #include "config/config.hpp"
+#include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 #include <fstream>
 #include <cstdlib>
-#include <spdlog/spdlog.h>
+#include <stdexcept>
 
 namespace arb {
 
-void to_json(nlohmann::json& j, const RiskConfig& c) {
-    j = nlohmann::json{
-        {"max_notional_per_trade", c.max_notional_per_trade},
-        {"max_daily_loss", c.max_daily_loss},
-        {"max_open_positions", c.max_open_positions},
-        {"max_exposure_per_market", c.max_exposure_per_market},
-        {"stop_loss_threshold", c.stop_loss_threshold},
-        {"slippage_threshold_bps", c.slippage_threshold_bps},
-        {"max_orders_per_minute", c.max_orders_per_minute}
-    };
-}
-
-void from_json(const nlohmann::json& j, RiskConfig& c) {
-    if (j.contains("max_notional_per_trade")) j.at("max_notional_per_trade").get_to(c.max_notional_per_trade);
-    if (j.contains("max_daily_loss")) j.at("max_daily_loss").get_to(c.max_daily_loss);
-    if (j.contains("max_open_positions")) j.at("max_open_positions").get_to(c.max_open_positions);
-    if (j.contains("max_exposure_per_market")) j.at("max_exposure_per_market").get_to(c.max_exposure_per_market);
-    if (j.contains("stop_loss_threshold")) j.at("stop_loss_threshold").get_to(c.stop_loss_threshold);
-    if (j.contains("slippage_threshold_bps")) j.at("slippage_threshold_bps").get_to(c.slippage_threshold_bps);
-    if (j.contains("max_orders_per_minute")) j.at("max_orders_per_minute").get_to(c.max_orders_per_minute);
-}
-
-void to_json(nlohmann::json& j, const StrategyConfig& c) {
-    j = nlohmann::json{
-        {"min_edge_cents", c.min_edge_cents},
-        {"max_spread_to_trade", c.max_spread_to_trade},
-        {"lag_move_threshold_bps", c.lag_move_threshold_bps},
-        {"staleness_window_ms", c.staleness_window_ms},
-        {"min_confidence", c.min_confidence},
-        {"target_fill_rate", c.target_fill_rate},
-        {"enable_s1", c.enable_s1},
-        {"enable_s2", c.enable_s2},
-        {"enable_s3", c.enable_s3}
-    };
-}
-
-void from_json(const nlohmann::json& j, StrategyConfig& c) {
-    if (j.contains("min_edge_cents")) j.at("min_edge_cents").get_to(c.min_edge_cents);
-    if (j.contains("max_spread_to_trade")) j.at("max_spread_to_trade").get_to(c.max_spread_to_trade);
-    if (j.contains("lag_move_threshold_bps")) j.at("lag_move_threshold_bps").get_to(c.lag_move_threshold_bps);
-    if (j.contains("staleness_window_ms")) j.at("staleness_window_ms").get_to(c.staleness_window_ms);
-    if (j.contains("min_confidence")) j.at("min_confidence").get_to(c.min_confidence);
-    if (j.contains("target_fill_rate")) j.at("target_fill_rate").get_to(c.target_fill_rate);
-    if (j.contains("enable_s1")) j.at("enable_s1").get_to(c.enable_s1);
-    if (j.contains("enable_s2")) j.at("enable_s2").get_to(c.enable_s2);
-    if (j.contains("enable_s3")) j.at("enable_s3").get_to(c.enable_s3);
-}
-
-void to_json(nlohmann::json& j, const ConnectionConfig& c) {
-    j = nlohmann::json{
-        {"polymarket_rest_url", c.polymarket_rest_url},
-        {"polymarket_ws_url", c.polymarket_ws_url},
-        {"polymarket_gamma_url", c.polymarket_gamma_url},
-        {"binance_ws_url", c.binance_ws_url},
-        {"binance_symbol", c.binance_symbol},
-        {"reconnect_delay_ms", c.reconnect_delay_ms},
-        {"max_reconnect_attempts", c.max_reconnect_attempts},
-        {"heartbeat_interval_ms", c.heartbeat_interval_ms},
-        {"connection_timeout_ms", c.connection_timeout_ms}
-    };
-}
-
-void from_json(const nlohmann::json& j, ConnectionConfig& c) {
-    if (j.contains("polymarket_rest_url")) j.at("polymarket_rest_url").get_to(c.polymarket_rest_url);
-    if (j.contains("polymarket_ws_url")) j.at("polymarket_ws_url").get_to(c.polymarket_ws_url);
-    if (j.contains("polymarket_gamma_url")) j.at("polymarket_gamma_url").get_to(c.polymarket_gamma_url);
-    if (j.contains("binance_ws_url")) j.at("binance_ws_url").get_to(c.binance_ws_url);
-    if (j.contains("binance_symbol")) j.at("binance_symbol").get_to(c.binance_symbol);
-    if (j.contains("reconnect_delay_ms")) j.at("reconnect_delay_ms").get_to(c.reconnect_delay_ms);
-    if (j.contains("max_reconnect_attempts")) j.at("max_reconnect_attempts").get_to(c.max_reconnect_attempts);
-    if (j.contains("heartbeat_interval_ms")) j.at("heartbeat_interval_ms").get_to(c.heartbeat_interval_ms);
-    if (j.contains("connection_timeout_ms")) j.at("connection_timeout_ms").get_to(c.connection_timeout_ms);
-}
-
-void to_json(nlohmann::json& j, const LoggingConfig& c) {
-    j = nlohmann::json{
-        {"log_dir", c.log_dir},
-        {"log_level", c.log_level},
-        {"log_to_console", c.log_to_console},
-        {"log_to_file", c.log_to_file},
-        {"json_format", c.json_format},
-        {"max_log_file_size_mb", c.max_log_file_size_mb},
-        {"max_log_files", c.max_log_files}
-    };
-}
-
-void from_json(const nlohmann::json& j, LoggingConfig& c) {
-    if (j.contains("log_dir")) j.at("log_dir").get_to(c.log_dir);
-    if (j.contains("log_level")) j.at("log_level").get_to(c.log_level);
-    if (j.contains("log_to_console")) j.at("log_to_console").get_to(c.log_to_console);
-    if (j.contains("log_to_file")) j.at("log_to_file").get_to(c.log_to_file);
-    if (j.contains("json_format")) j.at("json_format").get_to(c.json_format);
-    if (j.contains("max_log_file_size_mb")) j.at("max_log_file_size_mb").get_to(c.max_log_file_size_mb);
-    if (j.contains("max_log_files")) j.at("max_log_files").get_to(c.max_log_files);
-}
-
-void to_json(nlohmann::json& j, const Config& c) {
-    std::string mode_str;
-    switch (c.mode) {
-        case TradingMode::DRY_RUN: mode_str = "dry-run"; break;
-        case TradingMode::PAPER: mode_str = "paper"; break;
-        case TradingMode::LIVE: mode_str = "live"; break;
-    }
-
-    j = nlohmann::json{
-        {"mode", mode_str},
-        {"starting_balance_usdc", c.starting_balance_usdc},
-        {"risk", c.risk},
-        {"strategy", c.strategy},
-        {"connection", c.connection},
-        {"logging", c.logging},
-        {"trade_ledger_path", c.trade_ledger_path},
-        {"state_snapshot_path", c.state_snapshot_path},
-        {"market_slugs", c.market_slugs},
-        {"market_pattern", c.market_pattern}
-    };
-}
-
-void from_json(const nlohmann::json& j, Config& c) {
-    if (j.contains("mode")) {
-        std::string mode_str = j.at("mode").get<std::string>();
-        if (mode_str == "dry-run" || mode_str == "dry_run") c.mode = TradingMode::DRY_RUN;
-        else if (mode_str == "paper") c.mode = TradingMode::PAPER;
-        else if (mode_str == "live") c.mode = TradingMode::LIVE;
-    }
-    if (j.contains("starting_balance_usdc")) j.at("starting_balance_usdc").get_to(c.starting_balance_usdc);
-    if (j.contains("risk")) j.at("risk").get_to(c.risk);
-    if (j.contains("strategy")) j.at("strategy").get_to(c.strategy);
-    if (j.contains("connection")) j.at("connection").get_to(c.connection);
-    if (j.contains("logging")) j.at("logging").get_to(c.logging);
-    if (j.contains("trade_ledger_path")) j.at("trade_ledger_path").get_to(c.trade_ledger_path);
-    if (j.contains("state_snapshot_path")) j.at("state_snapshot_path").get_to(c.state_snapshot_path);
-    if (j.contains("market_slugs")) j.at("market_slugs").get_to(c.market_slugs);
-    if (j.contains("market_pattern")) j.at("market_pattern").get_to(c.market_pattern);
+std::string Config::get_env(const std::string& name, const std::string& default_val) {
+    const char* val = std::getenv(name.c_str());
+    return val ? std::string(val) : default_val;
 }
 
 Config Config::load(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
-        throw std::runtime_error("Failed to open config file: " + path);
+        spdlog::warn("Config file not found: {}, using defaults", path);
+        return Config{};
     }
 
     nlohmann::json j;
-    file >> j;
-
-    Config config;
-    from_json(j, config);
-
-    if (!config.validate()) {
-        throw std::runtime_error("Invalid configuration in: " + path);
+    try {
+        file >> j;
+    } catch (const std::exception& e) {
+        throw std::runtime_error("Failed to parse config: " + std::string(e.what()));
     }
 
+    Config config;
+
+    if (j.contains("mode")) config.mode = trading_mode_from_str(j["mode"].get<std::string>());
+
+    if (j.contains("exchange")) {
+        auto& ex = j["exchange"];
+        if (ex.contains("api_key_env")) config.exchange.api_key_env = ex["api_key_env"];
+        if (ex.contains("api_secret_env")) config.exchange.api_secret_env = ex["api_secret_env"];
+        if (ex.contains("testnet")) config.exchange.testnet = ex["testnet"];
+        if (ex.contains("spot_rest_url")) config.exchange.spot_rest_url = ex["spot_rest_url"];
+        if (ex.contains("spot_ws_url")) config.exchange.spot_ws_url = ex["spot_ws_url"];
+        if (ex.contains("futures_rest_url")) config.exchange.futures_rest_url = ex["futures_rest_url"];
+        if (ex.contains("futures_ws_url")) config.exchange.futures_ws_url = ex["futures_ws_url"];
+        if (ex.contains("reconnect_delay_ms")) config.exchange.reconnect_delay_ms = ex["reconnect_delay_ms"];
+        if (ex.contains("max_reconnect_attempts")) config.exchange.max_reconnect_attempts = ex["max_reconnect_attempts"];
+        if (ex.contains("connection_timeout_ms")) config.exchange.connection_timeout_ms = ex["connection_timeout_ms"];
+    }
+
+    if (j.contains("strategy")) {
+        auto& st = j["strategy"];
+        if (st.contains("symbols")) config.strategy.symbols = st["symbols"].get<std::vector<std::string>>();
+        if (st.contains("min_funding_rate")) config.strategy.min_funding_rate = st["min_funding_rate"];
+        if (st.contains("min_annual_yield_pct")) config.strategy.min_annual_yield_pct = st["min_annual_yield_pct"];
+        if (st.contains("min_avg_funding_rate")) config.strategy.min_avg_funding_rate = st["min_avg_funding_rate"];
+        if (st.contains("max_basis_deviation_pct")) config.strategy.max_basis_deviation_pct = st["max_basis_deviation_pct"];
+        if (st.contains("funding_rate_lookback_periods")) config.strategy.funding_rate_lookback_periods = st["funding_rate_lookback_periods"];
+        if (st.contains("entry_score_threshold")) config.strategy.entry_score_threshold = st["entry_score_threshold"];
+        if (st.contains("max_positions")) config.strategy.max_positions = st["max_positions"];
+        if (st.contains("rebalance_threshold_pct")) config.strategy.rebalance_threshold_pct = st["rebalance_threshold_pct"];
+        if (st.contains("max_holding_periods")) config.strategy.max_holding_periods = st["max_holding_periods"];
+    }
+
+    if (j.contains("risk")) {
+        auto& rk = j["risk"];
+        if (rk.contains("max_total_exposure_usd")) config.risk.max_total_exposure_usd = rk["max_total_exposure_usd"];
+        if (rk.contains("max_per_symbol_exposure_usd")) config.risk.max_per_symbol_exposure_usd = rk["max_per_symbol_exposure_usd"];
+        if (rk.contains("max_drawdown_pct")) config.risk.max_drawdown_pct = rk["max_drawdown_pct"];
+        if (rk.contains("max_daily_loss_usd")) config.risk.max_daily_loss_usd = rk["max_daily_loss_usd"];
+        if (rk.contains("futures_leverage")) config.risk.futures_leverage = rk["futures_leverage"];
+        if (rk.contains("margin_type")) config.risk.margin_type = rk["margin_type"];
+        if (rk.contains("stop_loss_basis_bps")) config.risk.stop_loss_basis_bps = rk["stop_loss_basis_bps"];
+        if (rk.contains("max_funding_rate_to_pay")) config.risk.max_funding_rate_to_pay = rk["max_funding_rate_to_pay"];
+        if (rk.contains("max_orders_per_minute")) config.risk.max_orders_per_minute = rk["max_orders_per_minute"];
+    }
+
+    if (j.contains("capital")) {
+        auto& cap = j["capital"];
+        if (cap.contains("starting_balance_usd")) config.capital.starting_balance_usd = cap["starting_balance_usd"];
+        if (cap.contains("allocation_pct")) config.capital.allocation_pct = cap["allocation_pct"];
+    }
+
+    if (j.contains("logging")) {
+        auto& lg = j["logging"];
+        if (lg.contains("log_dir")) config.logging.log_dir = lg["log_dir"];
+        if (lg.contains("log_level")) config.logging.log_level = lg["log_level"];
+        if (lg.contains("log_to_console")) config.logging.log_to_console = lg["log_to_console"];
+        if (lg.contains("log_to_file")) config.logging.log_to_file = lg["log_to_file"];
+    }
+
+    if (j.contains("polling")) {
+        auto& pl = j["polling"];
+        if (pl.contains("funding_rate_interval_s")) config.polling.funding_rate_interval_s = pl["funding_rate_interval_s"];
+        if (pl.contains("price_update_interval_ms")) config.polling.price_update_interval_ms = pl["price_update_interval_ms"];
+        if (pl.contains("strategy_eval_interval_s")) config.polling.strategy_eval_interval_s = pl["strategy_eval_interval_s"];
+        if (pl.contains("hedge_check_interval_s")) config.polling.hedge_check_interval_s = pl["hedge_check_interval_s"];
+        if (pl.contains("pnl_snapshot_interval_s")) config.polling.pnl_snapshot_interval_s = pl["pnl_snapshot_interval_s"];
+    }
+
+    if (j.contains("database_path")) config.database_path = j["database_path"];
+    if (j.contains("trade_ledger_path")) config.trade_ledger_path = j["trade_ledger_path"];
+
+    spdlog::info("Config loaded from {}", path);
     return config;
 }
 
 void Config::save(const std::string& path) const {
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        throw std::runtime_error("Failed to create config file: " + path);
-    }
-
     nlohmann::json j;
-    to_json(j, *this);
+    j["mode"] = arb::to_string(mode);
+    j["exchange"] = {
+        {"api_key_env", exchange.api_key_env},
+        {"api_secret_env", exchange.api_secret_env},
+        {"testnet", exchange.testnet},
+        {"spot_rest_url", exchange.spot_rest_url},
+        {"futures_rest_url", exchange.futures_rest_url},
+    };
+    j["strategy"] = {
+        {"symbols", strategy.symbols},
+        {"min_funding_rate", strategy.min_funding_rate},
+        {"min_annual_yield_pct", strategy.min_annual_yield_pct},
+        {"max_basis_deviation_pct", strategy.max_basis_deviation_pct},
+        {"max_positions", strategy.max_positions},
+    };
+    j["risk"] = {
+        {"max_total_exposure_usd", risk.max_total_exposure_usd},
+        {"max_per_symbol_exposure_usd", risk.max_per_symbol_exposure_usd},
+        {"max_drawdown_pct", risk.max_drawdown_pct},
+        {"max_daily_loss_usd", risk.max_daily_loss_usd},
+        {"futures_leverage", risk.futures_leverage},
+    };
+    j["capital"] = {
+        {"starting_balance_usd", capital.starting_balance_usd},
+        {"allocation_pct", capital.allocation_pct},
+    };
+    j["database_path"] = database_path;
+    j["trade_ledger_path"] = trade_ledger_path;
+
+    std::ofstream file(path);
     file << j.dump(2);
 }
 
-bool Config::validate() const {
-    // Basic validation
-    if (starting_balance_usdc <= 0) {
-        spdlog::error("starting_balance_usdc must be positive");
-        return false;
-    }
-
-    if (risk.max_notional_per_trade <= 0) {
-        spdlog::error("max_notional_per_trade must be positive");
-        return false;
-    }
-
-    if (risk.max_notional_per_trade > starting_balance_usdc * 0.5) {
-        spdlog::warn("max_notional_per_trade is > 50% of balance, this is risky");
-    }
-
-    if (risk.max_daily_loss <= 0 || risk.max_daily_loss > starting_balance_usdc) {
-        spdlog::error("max_daily_loss must be positive and <= balance");
-        return false;
-    }
-
-    if (strategy.min_edge_cents < 0) {
-        spdlog::error("min_edge_cents must be non-negative");
-        return false;
-    }
-
-    return true;
-}
-
-std::string Config::get_env(const std::string& name, const std::string& default_val) {
-    const char* val = std::getenv(name.c_str());
-    return val ? std::string(val) : default_val;
+void Config::validate() const {
+    if (strategy.symbols.empty()) throw std::runtime_error("No symbols configured");
+    if (risk.max_total_exposure_usd <= 0) throw std::runtime_error("max_total_exposure_usd must be positive");
+    if (capital.starting_balance_usd <= 0) throw std::runtime_error("starting_balance_usd must be positive");
+    if (risk.futures_leverage < 1 || risk.futures_leverage > 20) throw std::runtime_error("futures_leverage must be 1-20");
 }
 
 } // namespace arb

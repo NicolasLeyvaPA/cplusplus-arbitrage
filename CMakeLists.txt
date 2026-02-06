@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(dailyarb VERSION 1.0.0 LANGUAGES CXX)
+project(delta_neutral_bot VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,13 +23,6 @@ find_package(SQLite3 REQUIRED)
 # FetchContent for dependencies
 include(FetchContent)
 
-# Boost.Beast for WebSocket (header-only)
-FetchContent_Declare(
-    boost
-    URL https://github.com/boostorg/boost/releases/download/boost-1.84.0/boost-1.84.0-cmake.tar.xz
-    URL_HASH SHA256=2ab0a5e08cc8b6236f3c3608e3f0a4ae3c5e8e0f6f39d82dcf63e6ea8b671d89
-)
-
 # nlohmann/json for JSON parsing
 FetchContent_Declare(
     json
@@ -47,7 +40,7 @@ FetchContent_Declare(
 # Make fmt available first
 FetchContent_MakeAvailable(fmt)
 
-# Configure spdlog to use external fmt (avoid bundled fmt conflicts)
+# Configure spdlog to use external fmt
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "Use external fmt library" FORCE)
 
 # spdlog for logging
@@ -83,23 +76,21 @@ include_directories(
 # Main library sources
 set(LIB_SOURCES
     src/config/config.cpp
-    src/market_data/binance_client.cpp
-    src/market_data/polymarket_client.cpp
-    src/market_data/order_book.cpp
-    src/strategy/strategy_base.cpp
-    src/strategy/underpricing_strategy.cpp
-    src/strategy/stale_odds_strategy.cpp
+    src/exchange/binance_common.cpp
+    src/exchange/binance_spot.cpp
+    src/exchange/binance_futures.cpp
+    src/strategy/funding_monitor.cpp
+    src/strategy/basis_calculator.cpp
+    src/strategy/delta_neutral_engine.cpp
     src/execution/execution_engine.cpp
-    src/execution/order.cpp
-    src/risk/risk_manager.cpp
+    src/execution/hedge_manager.cpp
     src/position/position_manager.cpp
+    src/risk/risk_manager.cpp
     src/ui/terminal_ui.cpp
     src/utils/crypto.cpp
     src/utils/time_utils.cpp
     src/utils/metrics.cpp
-    src/persistence/trade_ledger.cpp
     src/persistence/session_database.cpp
-    src/arbitrage/multi_exchange_scanner.cpp
 )
 
 # Create static library
@@ -116,17 +107,9 @@ target_link_libraries(arblib PUBLIC
     fmt::fmt
 )
 
-# Check for ncurses
-find_package(Curses)
-if(CURSES_FOUND)
-    target_compile_definitions(arblib PUBLIC HAS_NCURSES)
-    target_include_directories(arblib PUBLIC ${CURSES_INCLUDE_DIRS})
-    target_link_libraries(arblib PUBLIC ${CURSES_LIBRARIES})
-endif()
-
 # Main executable
-add_executable(dailyarb src/main.cpp)
-target_link_libraries(dailyarb PRIVATE
+add_executable(delta_neutral_bot src/main.cpp)
+target_link_libraries(delta_neutral_bot PRIVATE
     arblib
     CLI11::CLI11
 )
@@ -135,13 +118,11 @@ target_link_libraries(dailyarb PRIVATE
 enable_testing()
 add_executable(tests
     tests/test_main.cpp
-    tests/test_underpricing.cpp
     tests/test_risk_manager.cpp
-    tests/test_order_book.cpp
-    tests/test_fee_calculation.cpp
-    tests/test_funding_dispersion.cpp
+    tests/test_types.cpp
+    tests/test_basis_calculator.cpp
+    tests/test_position_manager.cpp
     tests/test_session_database.cpp
-    tests/test_funding_settlement.cpp
 )
 target_link_libraries(tests PRIVATE
     arblib
@@ -152,15 +133,8 @@ target_link_libraries(tests PRIVATE
 include(GoogleTest)
 gtest_discover_tests(tests)
 
-# Replay tool for backtesting
-add_executable(replay_tool src/tools/replay_tool.cpp)
-target_link_libraries(replay_tool PRIVATE
-    arblib
-    CLI11::CLI11
-)
-
 # Install targets
-install(TARGETS dailyarb replay_tool
+install(TARGETS delta_neutral_bot
     RUNTIME DESTINATION bin
 )
-install(DIRECTORY configs/ DESTINATION etc/dailyarb)
+install(DIRECTORY configs/ DESTINATION etc/delta_neutral_bot)

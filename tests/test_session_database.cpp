@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <cstdio>
 
-using namespace arb;
+using namespace arb::db;
 
 class SessionDatabaseTest : public ::testing::Test {
 protected:

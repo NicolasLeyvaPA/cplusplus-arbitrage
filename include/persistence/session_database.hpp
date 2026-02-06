@@ -13,6 +13,7 @@ struct sqlite3;
 struct sqlite3_stmt;
 
 namespace arb {
+namespace db {
 
 // ============================================================================
 // AUDIT-GRADE SESSION DATABASE
@@ -314,4 +315,5 @@ OrderType order_type_from_string(const std::string& s);
 OrderStatus order_status_from_string(const std::string& s);
 OrderReason order_reason_from_string(const std::string& s);
 
+}  // namespace db
 }  // namespace arb
