@@ -8,7 +8,7 @@
 
 namespace arb {
 
-class BinanceFutures : public ExchangeInterface {
+class BinanceFutures : public FuturesInterface {
 public:
     explicit BinanceFutures(const ExchangeConfig& config);
 
@@ -23,23 +23,15 @@ public:
     bool is_connected() const override;
     ConnectionStatus status() const override;
 
-    // Futures-specific
-    FundingInfo get_funding_info(const std::string& symbol);
-    std::vector<FundingInfo> get_all_funding_rates();
-    std::vector<FundingInfo> get_funding_history(const std::string& symbol, int limit = 100);
-    bool set_leverage(const std::string& symbol, int leverage);
-    bool set_margin_type(const std::string& symbol, const std::string& type);
+    // FuturesInterface
+    FundingInfo get_funding_info(const std::string& symbol) override;
+    std::vector<FundingInfo> get_all_funding_rates() override;
+    std::vector<FundingInfo> get_funding_history(const std::string& symbol, int limit = 100) override;
+    bool set_leverage(const std::string& symbol, int leverage) override;
+    std::vector<FuturesPosition> get_positions() override;
 
-    struct FuturesPosition {
-        std::string symbol;
-        double position_amt{0};
-        double entry_price{0};
-        double mark_price{0};
-        double unrealized_profit{0};
-        double leverage{1};
-        std::string margin_type;
-    };
-    std::vector<FuturesPosition> get_positions();
+    // Binance-specific
+    bool set_margin_type(const std::string& symbol, const std::string& type);
 
 private:
     std::unique_ptr<BinanceHttpClient> http_;

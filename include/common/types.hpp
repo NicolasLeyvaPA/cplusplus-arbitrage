@@ -47,6 +47,7 @@ enum class TradingMode { DRY_RUN, PAPER, LIVE };
 enum class MarketType { SPOT, FUTURES };
 enum class PositionSide { LONG, SHORT, BOTH };
 enum class ConnectionStatus { DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING, ERROR };
+enum class HedgeMode { FULL_HEDGE, USDC_COLLATERAL };
 
 // ============================================================================
 // MARKET DATA
@@ -76,9 +77,11 @@ struct FundingInfo {
     Price index_price{0};
     uint64_t next_funding_time_ms{0};
     uint64_t timestamp_ms{0};
+    int funding_periods_per_day{3};  // Binance=3 (8h), Hyperliquid=24 (1h)
 
-    // 3 funding periods per day * 365 days
-    double annualized_rate() const { return current_rate * 3.0 * 365.0 * 100.0; }
+    double annualized_rate() const {
+        return current_rate * static_cast<double>(funding_periods_per_day) * 365.0 * 100.0;
+    }
 };
 
 struct BasisInfo {
@@ -134,7 +137,8 @@ struct DeltaNeutralPosition {
     // Computed properties
     double net_delta() const { return spot_size + futures_size; }
 
-    bool is_balanced(double tolerance_pct = 1.0) const {
+    bool is_balanced(double tolerance_pct = 1.0, HedgeMode mode = HedgeMode::FULL_HEDGE) const {
+        if (mode == HedgeMode::USDC_COLLATERAL) return true;  // No spot leg to balance
         if (spot_size == 0) return futures_size == 0;
         return std::abs(net_delta()) < std::abs(spot_size) * (tolerance_pct / 100.0);
     }
@@ -271,6 +275,15 @@ inline TradingMode trading_mode_from_str(const std::string& s) {
     if (s == "LIVE" || s == "live") return TradingMode::LIVE;
     if (s == "PAPER" || s == "paper") return TradingMode::PAPER;
     return TradingMode::DRY_RUN;
+}
+
+inline std::string to_string(HedgeMode m) {
+    return m == HedgeMode::FULL_HEDGE ? "FULL_HEDGE" : "USDC_COLLATERAL";
+}
+
+inline HedgeMode hedge_mode_from_str(const std::string& s) {
+    if (s == "FULL_HEDGE" || s == "full_hedge") return HedgeMode::FULL_HEDGE;
+    return HedgeMode::USDC_COLLATERAL;
 }
 
 } // namespace arb

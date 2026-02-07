@@ -196,7 +196,7 @@ bool BinanceFutures::set_margin_type(const std::string& symbol, const std::strin
     }
 }
 
-std::vector<BinanceFutures::FuturesPosition> BinanceFutures::get_positions() {
+std::vector<FuturesInterface::FuturesPosition> BinanceFutures::get_positions() {
     auto j = http_->signed_get("/fapi/v2/positionRisk");
     std::vector<FuturesPosition> positions;
     for (const auto& p : j) {

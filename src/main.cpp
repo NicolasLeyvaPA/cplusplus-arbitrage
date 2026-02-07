@@ -4,6 +4,7 @@
 #include <thread>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 
 #include <CLI/CLI.hpp>
 #include <spdlog/spdlog.h>
@@ -12,6 +13,8 @@
 
 #include "common/types.hpp"
 #include "config/config.hpp"
+#include "exchange/exchange_interface.hpp"
+#include "exchange/hyperliquid_perp.hpp"
 #include "exchange/binance_spot.hpp"
 #include "exchange/binance_futures.hpp"
 #include "strategy/funding_monitor.hpp"
@@ -88,8 +91,8 @@ int main(int argc, char* argv[]) {
     CLI11_PARSE(app, argc, argv);
 
     if (show_version) {
-        std::cout << "Delta-Neutral Funding Arbitrage Bot v1.0.0\n";
-        std::cout << "Built with C++20\n";
+        std::cout << "Delta-Neutral Funding Arbitrage Bot v2.0.0\n";
+        std::cout << "Built with C++20 | Supports: Binance, Hyperliquid\n";
         return 0;
     }
 
@@ -126,12 +129,38 @@ int main(int argc, char* argv[]) {
     // Setup logging
     setup_logging(config.logging);
 
+    // =========================================================================
+    // EXCHANGE FACTORY
+    // =========================================================================
+    std::unique_ptr<ExchangeInterface> spot_exchange;
+    std::unique_ptr<FuturesInterface> futures_exchange;
+    bool is_hyperliquid = (config.exchange.exchange_type == "hyperliquid");
+
+    if (is_hyperliquid) {
+        // Hyperliquid: single perp exchange, NullExchange for spot leg
+        futures_exchange = std::make_unique<HyperliquidPerp>(config.exchange);
+
+        if (config.strategy.hedge_mode == HedgeMode::USDC_COLLATERAL) {
+            spot_exchange = std::make_unique<NullExchange>();
+        } else {
+            spdlog::error("Hyperliquid FULL_HEDGE requires spot exchange (not yet supported)");
+            spdlog::error("Use hedge_mode=USDC_COLLATERAL for Hyperliquid");
+            return 1;
+        }
+    } else {
+        // Binance: separate spot and futures clients
+        spot_exchange = std::make_unique<BinanceSpot>(config.exchange);
+        futures_exchange = std::make_unique<BinanceFutures>(config.exchange);
+    }
+
     // Startup banner
     std::cout << "\n";
     std::cout << "========================================\n";
     std::cout << "  DELTA-NEUTRAL FUNDING ARBITRAGE BOT\n";
     std::cout << "========================================\n";
+    std::cout << "  Exchange: " << config.exchange.exchange_type << "\n";
     std::cout << "  Mode:     " << arb::to_string(config.mode) << "\n";
+    std::cout << "  Hedge:    " << arb::to_string(config.strategy.hedge_mode) << "\n";
     std::cout << "  Symbols:  ";
     for (size_t i = 0; i < config.strategy.symbols.size(); i++) {
         if (i > 0) std::cout << ", ";
@@ -141,6 +170,9 @@ int main(int argc, char* argv[]) {
     std::cout << "  Capital:  $" << config.capital.starting_balance_usd << "\n";
     std::cout << "  Max Exp:  $" << config.risk.max_total_exposure_usd << "\n";
     std::cout << "  Testnet:  " << (config.exchange.testnet ? "YES" : "NO") << "\n";
+    if (config.strategy.hlp_allocation_pct > 0) {
+        std::cout << "  HLP:      " << config.strategy.hlp_allocation_pct << "% allocation\n";
+    }
     std::cout << "========================================\n\n";
 
     // Validate config
@@ -155,37 +187,56 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Initialize exchange clients
-    spdlog::info("Initializing exchange clients...");
-    BinanceSpot spot(config.exchange);
-    BinanceFutures futures(config.exchange);
+    // =========================================================================
+    // CONNECT EXCHANGES
+    // =========================================================================
+    spdlog::info("Connecting to {}{}...",
+                 config.exchange.exchange_type,
+                 config.exchange.testnet ? " Testnet" : "");
 
-    // Connect
-    spdlog::info("Connecting to Binance{}...", config.exchange.testnet ? " Testnet" : "");
-    if (!spot.connect()) {
-        spdlog::error("Failed to connect to Binance Spot");
+    if (!spot_exchange->connect()) {
+        spdlog::error("Failed to connect spot exchange");
         return 1;
     }
-    if (!futures.connect()) {
-        spdlog::error("Failed to connect to Binance Futures");
+    if (!futures_exchange->connect()) {
+        spdlog::error("Failed to connect futures exchange");
         return 1;
     }
     spdlog::info("Exchange connections established");
 
-    // Configure futures leverage and margin type
+    // Configure futures leverage
     for (const auto& symbol : config.strategy.symbols) {
-        futures.set_leverage(symbol, config.risk.futures_leverage);
-        futures.set_margin_type(symbol, config.risk.margin_type);
-        spdlog::info("Configured {}: leverage={}, margin={}", symbol,
-                     config.risk.futures_leverage, config.risk.margin_type);
+        futures_exchange->set_leverage(symbol, config.risk.futures_leverage);
+        spdlog::info("Configured {}: leverage={}", symbol, config.risk.futures_leverage);
     }
 
-    // Initialize components
-    FundingMonitor funding_monitor(futures, config.strategy);
+    // =========================================================================
+    // HLP VAULT ALLOCATION (Hyperliquid only)
+    // =========================================================================
+    if (is_hyperliquid && config.strategy.hlp_allocation_pct > 0) {
+        auto* hl_perp = dynamic_cast<HyperliquidPerp*>(futures_exchange.get());
+        if (hl_perp) {
+            double hlp_amount = config.capital.starting_balance_usd *
+                                (config.strategy.hlp_allocation_pct / 100.0);
+            spdlog::info("Depositing ${:.2f} to HLP vault ({:.0f}% of capital)",
+                         hlp_amount, config.strategy.hlp_allocation_pct);
+            if (hl_perp->deposit_to_hlp(hlp_amount)) {
+                spdlog::info("HLP deposit successful");
+            } else {
+                spdlog::warn("HLP deposit failed - continuing without vault allocation");
+            }
+        }
+    }
+
+    // =========================================================================
+    // INITIALIZE COMPONENTS
+    // =========================================================================
+    FundingMonitor funding_monitor(*futures_exchange, config.strategy);
     BasisCalculator basis_calculator;
     PositionManager position_manager;
     RiskManager risk_manager(config.risk);
-    ExecutionEngine execution(spot, futures, config.mode);
+    ExecutionEngine execution(*spot_exchange, *futures_exchange, config.mode,
+                              config.strategy.hedge_mode, config.fees);
     HedgeManager hedge_manager(execution, config.strategy.rebalance_threshold_pct);
     DeltaNeutralEngine engine(funding_monitor, basis_calculator,
                               config.strategy, config.risk);
@@ -218,7 +269,10 @@ int main(int argc, char* argv[]) {
         spdlog::info("{}", msg);
     };
 
-    log_event("Bot started in " + arb::to_string(config.mode) + " mode");
+    log_event("Bot started in " + arb::to_string(config.mode) + " mode on " +
+              config.exchange.exchange_type);
+
+    bool use_spot_ticker = (config.strategy.hedge_mode == HedgeMode::FULL_HEDGE);
 
     spdlog::info("Entering main loop...");
 
@@ -252,11 +306,16 @@ int main(int argc, char* argv[]) {
 
             for (const auto& symbol : config.strategy.symbols) {
                 try {
-                    auto spot_ticker = spot.get_ticker(symbol);
-                    auto futures_ticker = futures.get_ticker(symbol);
+                    auto futures_ticker = futures_exchange->get_ticker(symbol);
+                    Price spot_mid = futures_ticker.mid();  // default: use futures as proxy
 
-                    basis_calculator.update(symbol, spot_ticker.mid(), futures_ticker.mid());
-                    position_manager.mark_to_market(symbol, spot_ticker.mid(), futures_ticker.mid());
+                    if (use_spot_ticker) {
+                        auto spot_ticker = spot_exchange->get_ticker(symbol);
+                        spot_mid = spot_ticker.mid();
+                    }
+
+                    basis_calculator.update(symbol, spot_mid, futures_ticker.mid());
+                    position_manager.mark_to_market(symbol, spot_mid, futures_ticker.mid());
                 } catch (const std::exception& e) {
                     spdlog::warn("Price update failed for {}: {}", symbol, e.what());
                 }
@@ -273,6 +332,10 @@ int main(int argc, char* argv[]) {
 
             double available_capital = config.capital.starting_balance_usd *
                                        (config.capital.allocation_pct / 100.0);
+            // Subtract HLP allocation from trading capital
+            if (config.strategy.hlp_allocation_pct > 0) {
+                available_capital *= (1.0 - config.strategy.hlp_allocation_pct / 100.0);
+            }
             available_capital -= position_manager.total_exposure();
 
             auto positions = position_manager.get_all_positions();
@@ -285,8 +348,14 @@ int main(int argc, char* argv[]) {
                              signal.expected_annual_yield);
 
                 if (signal.type == SignalType::OPEN) {
-                    auto spot_ticker = spot.get_ticker(signal.symbol);
-                    Notional exposure = signal.target_size * spot_ticker.mid();
+                    auto futures_ticker = futures_exchange->get_ticker(signal.symbol);
+                    Price spot_price = futures_ticker.ask;  // default
+                    if (use_spot_ticker) {
+                        auto spot_ticker = spot_exchange->get_ticker(signal.symbol);
+                        spot_price = spot_ticker.ask;
+                    }
+
+                    Notional exposure = signal.target_size * spot_price;
                     auto risk_check = risk_manager.check_new_position(
                         signal.symbol, exposure, position_manager);
                     if (!risk_check.allowed) {
@@ -300,10 +369,9 @@ int main(int argc, char* argv[]) {
                         continue;
                     }
 
-                    auto futures_ticker = futures.get_ticker(signal.symbol);
                     auto result = execution.open_delta_neutral(
                         signal.symbol, signal.target_size,
-                        spot_ticker.ask, futures_ticker.bid);
+                        spot_price, futures_ticker.bid);
 
                     if (result.success) {
                         position_manager.update_spot_fill(
@@ -336,25 +404,28 @@ int main(int argc, char* argv[]) {
 
         // -------------------------------------------------------------------
         // HEDGE CHECK (every hedge_check_interval_s)
+        // In USDC_COLLATERAL mode, no spot hedge needed
         // -------------------------------------------------------------------
-        auto hedge_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            loop_now - last_hedge_check).count();
-        if (hedge_elapsed >= config.polling.hedge_check_interval_s) {
-            last_hedge_check = loop_now;
+        if (use_spot_ticker) {
+            auto hedge_elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                loop_now - last_hedge_check).count();
+            if (hedge_elapsed >= config.polling.hedge_check_interval_s) {
+                last_hedge_check = loop_now;
 
-            auto positions = position_manager.get_all_positions();
-            for (const auto& [symbol, pos] : positions) {
-                if (!pos.is_open()) continue;
-                try {
-                    auto spot_ticker = spot.get_ticker(symbol);
-                    auto futures_ticker = futures.get_ticker(symbol);
-                    auto rebalance = hedge_manager.check_and_rebalance(
-                        symbol, pos, spot_ticker, futures_ticker);
-                    if (rebalance.needed && rebalance.executed) {
-                        log_event("REBALANCED " + symbol + ": " + rebalance.reason);
+                auto positions = position_manager.get_all_positions();
+                for (const auto& [symbol, pos] : positions) {
+                    if (!pos.is_open()) continue;
+                    try {
+                        auto spot_ticker = spot_exchange->get_ticker(symbol);
+                        auto futures_ticker = futures_exchange->get_ticker(symbol);
+                        auto rebalance = hedge_manager.check_and_rebalance(
+                            symbol, pos, spot_ticker, futures_ticker);
+                        if (rebalance.needed && rebalance.executed) {
+                            log_event("REBALANCED " + symbol + ": " + rebalance.reason);
+                        }
+                    } catch (const std::exception& e) {
+                        spdlog::warn("Hedge check failed for {}: {}", symbol, e.what());
                     }
-                } catch (const std::exception& e) {
-                    spdlog::warn("Hedge check failed for {}: {}", symbol, e.what());
                 }
             }
         }
@@ -408,6 +479,18 @@ int main(int argc, char* argv[]) {
 
     funding_monitor.stop();
 
+    // Withdraw from HLP if we deposited
+    if (is_hyperliquid && config.strategy.hlp_allocation_pct > 0) {
+        auto* hl_perp = dynamic_cast<HyperliquidPerp*>(futures_exchange.get());
+        if (hl_perp) {
+            auto vault_info = hl_perp->get_hlp_info();
+            if (vault_info.user_share > 0) {
+                spdlog::info("Withdrawing ${:.2f} from HLP vault", vault_info.user_share);
+                hl_perp->withdraw_from_hlp(vault_info.user_share);
+            }
+        }
+    }
+
     auto final_positions = position_manager.get_all_positions();
     for (const auto& [symbol, pos] : final_positions) {
         if (pos.is_open()) {
@@ -415,10 +498,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    spot.disconnect();
-    futures.disconnect();
+    spot_exchange->disconnect();
+    futures_exchange->disconnect();
 
     spdlog::info("=== Session Summary ===");
+    spdlog::info("Exchange:      {}", config.exchange.exchange_type);
     spdlog::info("Total PnL:     ${:.4f}", position_manager.total_pnl());
     spdlog::info("Total Funding: ${:.4f}", position_manager.total_funding());
     spdlog::info("Total Exposure: ${:.2f}", position_manager.total_exposure());

@@ -5,7 +5,7 @@
 
 namespace arb {
 
-FundingMonitor::FundingMonitor(BinanceFutures& futures, const StrategyConfig& config)
+FundingMonitor::FundingMonitor(FuturesInterface& futures, const StrategyConfig& config)
     : futures_(futures), config_(config) {}
 
 FundingMonitor::~FundingMonitor() { stop(); }
@@ -25,6 +25,11 @@ void FundingMonitor::start() {
             auto& hist = funding_history_[symbol];
             for (const auto& h : history) {
                 hist.push_back(h.current_rate);
+            }
+            // Initialize EMA with the average of history
+            if (!hist.empty()) {
+                double sum = std::accumulate(hist.begin(), hist.end(), 0.0);
+                ema_predictions_[symbol] = sum / hist.size();
             }
             spdlog::info("Loaded {} historical funding rates for {}", hist.size(), symbol);
         } catch (const std::exception& e) {
@@ -62,8 +67,18 @@ void FundingMonitor::fetch_funding_rates() {
                 hist.erase(hist.begin());
             }
 
-            spdlog::debug("{} funding rate: {:.6f} ({:.2f}% APY)",
-                         symbol, info.current_rate, info.annualized_rate());
+            // Update EMA prediction
+            double alpha = 0.3;
+            auto ema_it = ema_predictions_.find(symbol);
+            if (ema_it != ema_predictions_.end()) {
+                ema_it->second = alpha * info.current_rate + (1.0 - alpha) * ema_it->second;
+            } else {
+                ema_predictions_[symbol] = info.current_rate;
+            }
+
+            spdlog::debug("{} funding rate: {:.6f} ({:.2f}% APY), EMA: {:.6f}",
+                         symbol, info.current_rate, info.annualized_rate(),
+                         ema_predictions_[symbol]);
         } catch (const std::exception& e) {
             spdlog::warn("Failed to fetch funding for {}: {}", symbol, e.what());
         }
@@ -97,6 +112,29 @@ double FundingMonitor::average_funding_rate(const std::string& symbol, int perio
     return sum / n;
 }
 
+double FundingMonitor::predicted_funding_rate(const std::string& symbol, double alpha) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    (void)alpha;  // alpha is applied in fetch_funding_rates
+    auto it = ema_predictions_.find(symbol);
+    if (it != ema_predictions_.end()) return it->second;
+    return 0;
+}
+
+bool FundingMonitor::is_elevated_rate(const std::string& symbol, double multiplier) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    auto current_it = current_funding_.find(symbol);
+    if (current_it == current_funding_.end()) return false;
+
+    auto hist_it = funding_history_.find(symbol);
+    if (hist_it == funding_history_.end() || hist_it->second.empty()) return false;
+
+    const auto& hist = hist_it->second;
+    int n = std::min(config_.funding_rate_lookback_periods, static_cast<int>(hist.size()));
+    double avg = std::accumulate(hist.end() - n, hist.end(), 0.0) / n;
+
+    return current_it->second.current_rate > avg * multiplier;
+}
+
 double FundingMonitor::compute_score(const std::string& symbol) const {
     // Must hold mutex
     auto it = current_funding_.find(symbol);
@@ -111,7 +149,7 @@ double FundingMonitor::compute_score(const std::string& symbol) const {
         score += rate_score * 0.4;
     }
 
-    // Average rate component (40% weight)
+    // Average rate component (30% weight)
     double avg = 0;
     auto hist_it = funding_history_.find(symbol);
     if (hist_it != funding_history_.end() && !hist_it->second.empty()) {
@@ -121,12 +159,14 @@ double FundingMonitor::compute_score(const std::string& symbol) const {
     }
     if (avg >= config_.min_avg_funding_rate) {
         double avg_score = std::min(1.0, avg / (config_.min_avg_funding_rate * 5));
-        score += avg_score * 0.4;
+        score += avg_score * 0.3;
     }
 
-    // Predicted rate component (20% weight)
-    if (info.predicted_rate > 0) {
-        score += std::min(1.0, info.predicted_rate / config_.min_funding_rate) * 0.2;
+    // Predicted rate component (30% weight) - using EMA
+    auto ema_it = ema_predictions_.find(symbol);
+    double predicted = (ema_it != ema_predictions_.end()) ? ema_it->second : info.predicted_rate;
+    if (predicted > 0) {
+        score += std::min(1.0, predicted / config_.min_funding_rate) * 0.3;
     }
 
     return score;

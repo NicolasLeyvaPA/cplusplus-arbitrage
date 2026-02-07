@@ -202,10 +202,8 @@ Size DeltaNeutralEngine::calculate_position_size(
 
     Size size = usable_capital / price;
 
-    // Minimum size checks (Binance minimums)
-    if (symbol == "BTCUSDT" && size < 0.001) return 0;
-    if (symbol == "ETHUSDT" && size < 0.01) return 0;
-    if (size * price < 10.0) return 0;  // Min $10 notional
+    // Minimum notional check (config-driven)
+    if (size * price < strategy_config_.min_notional_usd) return 0;
 
     return size;
 }

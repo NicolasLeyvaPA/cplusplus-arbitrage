@@ -79,6 +79,11 @@ set(LIB_SOURCES
     src/exchange/binance_common.cpp
     src/exchange/binance_spot.cpp
     src/exchange/binance_futures.cpp
+    src/exchange/hyperliquid_signer.cpp
+    src/exchange/hyperliquid_client.cpp
+    src/exchange/hyperliquid_perp.cpp
+    src/utils/keccak256.cpp
+    src/utils/msgpack_lite.cpp
     src/strategy/funding_monitor.cpp
     src/strategy/basis_calculator.cpp
     src/strategy/delta_neutral_engine.cpp
@@ -123,6 +128,7 @@ add_executable(tests
     tests/test_basis_calculator.cpp
     tests/test_position_manager.cpp
     tests/test_session_database.cpp
+    tests/test_hyperliquid.cpp
 )
 target_link_libraries(tests PRIVATE
     arblib

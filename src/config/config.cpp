@@ -32,6 +32,7 @@ Config Config::load(const std::string& path) {
 
     if (j.contains("exchange")) {
         auto& ex = j["exchange"];
+        if (ex.contains("exchange_type")) config.exchange.exchange_type = ex["exchange_type"];
         if (ex.contains("api_key_env")) config.exchange.api_key_env = ex["api_key_env"];
         if (ex.contains("api_secret_env")) config.exchange.api_secret_env = ex["api_secret_env"];
         if (ex.contains("testnet")) config.exchange.testnet = ex["testnet"];
@@ -39,14 +40,27 @@ Config Config::load(const std::string& path) {
         if (ex.contains("spot_ws_url")) config.exchange.spot_ws_url = ex["spot_ws_url"];
         if (ex.contains("futures_rest_url")) config.exchange.futures_rest_url = ex["futures_rest_url"];
         if (ex.contains("futures_ws_url")) config.exchange.futures_ws_url = ex["futures_ws_url"];
+        if (ex.contains("wallet_private_key_env")) config.exchange.wallet_private_key_env = ex["wallet_private_key_env"];
+        if (ex.contains("hl_rest_url")) config.exchange.hl_rest_url = ex["hl_rest_url"];
+        if (ex.contains("hl_user_address")) config.exchange.hl_user_address = ex["hl_user_address"];
+        if (ex.contains("hl_use_api_wallet")) config.exchange.hl_use_api_wallet = ex["hl_use_api_wallet"];
         if (ex.contains("reconnect_delay_ms")) config.exchange.reconnect_delay_ms = ex["reconnect_delay_ms"];
         if (ex.contains("max_reconnect_attempts")) config.exchange.max_reconnect_attempts = ex["max_reconnect_attempts"];
         if (ex.contains("connection_timeout_ms")) config.exchange.connection_timeout_ms = ex["connection_timeout_ms"];
     }
 
+    if (j.contains("fees")) {
+        auto& fe = j["fees"];
+        if (fe.contains("perp_taker_fee_pct")) config.fees.perp_taker_fee_pct = fe["perp_taker_fee_pct"];
+        if (fe.contains("perp_maker_fee_pct")) config.fees.perp_maker_fee_pct = fe["perp_maker_fee_pct"];
+        if (fe.contains("spot_taker_fee_pct")) config.fees.spot_taker_fee_pct = fe["spot_taker_fee_pct"];
+        if (fe.contains("spot_maker_fee_pct")) config.fees.spot_maker_fee_pct = fe["spot_maker_fee_pct"];
+    }
+
     if (j.contains("strategy")) {
         auto& st = j["strategy"];
         if (st.contains("symbols")) config.strategy.symbols = st["symbols"].get<std::vector<std::string>>();
+        if (st.contains("hedge_mode")) config.strategy.hedge_mode = hedge_mode_from_str(st["hedge_mode"].get<std::string>());
         if (st.contains("min_funding_rate")) config.strategy.min_funding_rate = st["min_funding_rate"];
         if (st.contains("min_annual_yield_pct")) config.strategy.min_annual_yield_pct = st["min_annual_yield_pct"];
         if (st.contains("min_avg_funding_rate")) config.strategy.min_avg_funding_rate = st["min_avg_funding_rate"];
@@ -56,6 +70,10 @@ Config Config::load(const std::string& path) {
         if (st.contains("max_positions")) config.strategy.max_positions = st["max_positions"];
         if (st.contains("rebalance_threshold_pct")) config.strategy.rebalance_threshold_pct = st["rebalance_threshold_pct"];
         if (st.contains("max_holding_periods")) config.strategy.max_holding_periods = st["max_holding_periods"];
+        if (st.contains("funding_periods_per_day")) config.strategy.funding_periods_per_day = st["funding_periods_per_day"];
+        if (st.contains("min_notional_usd")) config.strategy.min_notional_usd = st["min_notional_usd"];
+        if (st.contains("max_fee_breakeven_days")) config.strategy.max_fee_breakeven_days = st["max_fee_breakeven_days"];
+        if (st.contains("hlp_allocation_pct")) config.strategy.hlp_allocation_pct = st["hlp_allocation_pct"];
     }
 
     if (j.contains("risk")) {
@@ -105,18 +123,23 @@ void Config::save(const std::string& path) const {
     nlohmann::json j;
     j["mode"] = arb::to_string(mode);
     j["exchange"] = {
-        {"api_key_env", exchange.api_key_env},
-        {"api_secret_env", exchange.api_secret_env},
+        {"exchange_type", exchange.exchange_type},
         {"testnet", exchange.testnet},
-        {"spot_rest_url", exchange.spot_rest_url},
-        {"futures_rest_url", exchange.futures_rest_url},
+        {"hl_rest_url", exchange.hl_rest_url},
+        {"wallet_private_key_env", exchange.wallet_private_key_env},
+    };
+    j["fees"] = {
+        {"perp_taker_fee_pct", fees.perp_taker_fee_pct},
+        {"perp_maker_fee_pct", fees.perp_maker_fee_pct},
     };
     j["strategy"] = {
         {"symbols", strategy.symbols},
+        {"hedge_mode", arb::to_string(strategy.hedge_mode)},
         {"min_funding_rate", strategy.min_funding_rate},
         {"min_annual_yield_pct", strategy.min_annual_yield_pct},
-        {"max_basis_deviation_pct", strategy.max_basis_deviation_pct},
         {"max_positions", strategy.max_positions},
+        {"funding_periods_per_day", strategy.funding_periods_per_day},
+        {"hlp_allocation_pct", strategy.hlp_allocation_pct},
     };
     j["risk"] = {
         {"max_total_exposure_usd", risk.max_total_exposure_usd},

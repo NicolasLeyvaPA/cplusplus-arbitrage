@@ -7,7 +7,11 @@ demo_simulator
 dailyarb
 delta_neutral_bot
 replay_tool
-/tests
+
+# Ignore the 'tests' binary but NOT the tests/ directory
+# The binary is built in the build/ directory anyway
+!/tests/
+!/tests/**
 
 # Object files
 *.o

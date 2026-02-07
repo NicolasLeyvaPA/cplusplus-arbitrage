@@ -2,8 +2,7 @@
 
 #include "common/types.hpp"
 #include "config/config.hpp"
-#include "exchange/binance_spot.hpp"
-#include "exchange/binance_futures.hpp"
+#include "exchange/exchange_interface.hpp"
 #include <map>
 #include <mutex>
 #include <atomic>
@@ -12,9 +11,11 @@ namespace arb {
 
 class ExecutionEngine {
 public:
-    ExecutionEngine(BinanceSpot& spot,
-                    BinanceFutures& futures,
-                    TradingMode mode);
+    ExecutionEngine(ExchangeInterface& spot,
+                    FuturesInterface& futures,
+                    TradingMode mode,
+                    HedgeMode hedge_mode = HedgeMode::USDC_COLLATERAL,
+                    const FeeConfig& fees = FeeConfig{});
 
     struct ExecutionResult {
         bool success{false};
@@ -34,14 +35,17 @@ public:
     OrderResponse execute_order(const OrderRequest& req);
 
     TradingMode mode() const { return mode_; }
+    HedgeMode hedge_mode() const { return hedge_mode_; }
 
 private:
     OrderResponse paper_execute(const OrderRequest& req);
     OrderResponse dry_run_execute(const OrderRequest& req);
 
-    BinanceSpot& spot_;
-    BinanceFutures& futures_;
+    ExchangeInterface& spot_;
+    FuturesInterface& futures_;
     TradingMode mode_;
+    HedgeMode hedge_mode_;
+    FeeConfig fees_;
 
     struct PaperState {
         double usdt_balance{10000.0};

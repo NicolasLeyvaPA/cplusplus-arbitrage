@@ -4,10 +4,11 @@
 
 namespace arb {
 
-ExecutionEngine::ExecutionEngine(BinanceSpot& spot, BinanceFutures& futures, TradingMode mode)
-    : spot_(spot), futures_(futures), mode_(mode)
+ExecutionEngine::ExecutionEngine(ExchangeInterface& spot, FuturesInterface& futures,
+                                 TradingMode mode, HedgeMode hedge_mode, const FeeConfig& fees)
+    : spot_(spot), futures_(futures), mode_(mode), hedge_mode_(hedge_mode), fees_(fees)
 {
-    spdlog::info("ExecutionEngine initialized in {} mode", arb::to_string(mode));
+    spdlog::info("ExecutionEngine initialized: mode={}, hedge={}", arb::to_string(mode), arb::to_string(hedge_mode));
 }
 
 OrderResponse ExecutionEngine::execute_order(const OrderRequest& req) {
@@ -59,7 +60,9 @@ OrderResponse ExecutionEngine::paper_execute(const OrderRequest& req) {
     resp.timestamp_ms = static_cast<uint64_t>(now_ms());
 
     double notional = req.quantity * req.price;
-    double fee = notional * 0.0004;  // 0.04% taker fee estimate
+    // Use fee config instead of hardcoded 0.04%
+    double fee_rate = (req.market == MarketType::FUTURES) ? fees_.perp_taker_fee_pct : fees_.spot_taker_fee_pct;
+    double fee = notional * fee_rate;
 
     if (req.market == MarketType::SPOT) {
         if (req.side == Side::BUY) {
@@ -87,25 +90,21 @@ OrderResponse ExecutionEngine::paper_execute(const OrderRequest& req) {
         }
     } else {
         // Futures: margin-based
-        double required_margin = notional / 1.0;  // 1x leverage
         if (req.side == Side::SELL) {
-            // Opening short
             paper_state_.futures_positions[req.symbol] -= req.quantity;
         } else {
-            // Closing short or opening long
             paper_state_.futures_positions[req.symbol] += req.quantity;
         }
         paper_state_.usdt_balance -= fee;
         resp.status = OrderStatus::FILLED;
         resp.executed_qty = req.quantity;
         resp.cumulative_quote_qty = notional;
-        (void)required_margin;
     }
 
-    spdlog::info("[PAPER] {} {} {} {:.6f} @ {:.2f} -> {}",
+    spdlog::info("[PAPER] {} {} {} {:.6f} @ {:.2f} -> {} (fee: ${:.4f})",
                  arb::to_string(req.market), arb::to_string(req.side),
                  req.symbol, req.quantity, req.price,
-                 arb::to_string(resp.status));
+                 arb::to_string(resp.status), fee);
     return resp;
 }
 
@@ -114,23 +113,30 @@ ExecutionEngine::ExecutionResult ExecutionEngine::open_delta_neutral(
 {
     ExecutionResult result;
 
-    spdlog::info("Opening delta-neutral: {} size={:.6f} spot={:.2f} futures={:.2f}",
-                 symbol, size, spot_price, futures_price);
+    spdlog::info("Opening delta-neutral: {} size={:.6f} spot={:.2f} futures={:.2f} hedge={}",
+                 symbol, size, spot_price, futures_price, arb::to_string(hedge_mode_));
 
-    // Leg 1: Buy spot
-    OrderRequest spot_req;
-    spot_req.symbol = symbol;
-    spot_req.market = MarketType::SPOT;
-    spot_req.side = Side::BUY;
-    spot_req.type = OrderType::MARKET;
-    spot_req.quantity = size;
-    spot_req.price = spot_price;
+    // Leg 1: Buy spot (only in FULL_HEDGE mode)
+    if (hedge_mode_ == HedgeMode::FULL_HEDGE) {
+        OrderRequest spot_req;
+        spot_req.symbol = symbol;
+        spot_req.market = MarketType::SPOT;
+        spot_req.side = Side::BUY;
+        spot_req.type = OrderType::MARKET;
+        spot_req.quantity = size;
+        spot_req.price = spot_price;
 
-    result.spot_response = execute_order(spot_req);
-    if (!result.spot_response.success()) {
-        result.error = "Spot leg failed: " + result.spot_response.error_message;
-        spdlog::error("{}", result.error);
-        return result;
+        result.spot_response = execute_order(spot_req);
+        if (!result.spot_response.success()) {
+            result.error = "Spot leg failed: " + result.spot_response.error_message;
+            spdlog::error("{}", result.error);
+            return result;
+        }
+    } else {
+        // USDC_COLLATERAL: no spot leg, just mark as filled
+        result.spot_response.status = OrderStatus::FILLED;
+        result.spot_response.executed_qty = 0;
+        result.spot_response.symbol = symbol;
     }
 
     // Leg 2: Short futures
@@ -145,13 +151,13 @@ ExecutionEngine::ExecutionResult ExecutionEngine::open_delta_neutral(
     result.futures_response = execute_order(futures_req);
     if (!result.futures_response.success()) {
         result.error = "Futures leg failed: " + result.futures_response.error_message;
-        spdlog::error("{}. Spot leg filled - UNWIND NEEDED!", result.error);
-        // In production, you'd unwind the spot leg here
+        spdlog::error("{}. {} unwind needed!", result.error,
+                       hedge_mode_ == HedgeMode::FULL_HEDGE ? "Spot leg filled -" : "No");
         return result;
     }
 
     result.success = true;
-    spdlog::info("Delta-neutral opened: {} {:.6f} units", symbol, size);
+    spdlog::info("Delta-neutral opened: {} {:.6f} units ({})", symbol, size, arb::to_string(hedge_mode_));
     return result;
 }
 
@@ -181,8 +187,8 @@ ExecutionEngine::ExecutionResult ExecutionEngine::close_delta_neutral(
         }
     }
 
-    // Leg 2: Sell spot
-    if (position.spot_size > 0) {
+    // Leg 2: Sell spot (only in FULL_HEDGE mode)
+    if (hedge_mode_ == HedgeMode::FULL_HEDGE && position.spot_size > 0) {
         OrderRequest spot_req;
         spot_req.symbol = symbol;
         spot_req.market = MarketType::SPOT;
@@ -196,9 +202,15 @@ ExecutionEngine::ExecutionResult ExecutionEngine::close_delta_neutral(
             result.error = "Close spot failed: " + result.spot_response.error_message;
             spdlog::error("{}", result.error);
         }
+    } else {
+        result.spot_response.status = OrderStatus::FILLED;
+        result.spot_response.executed_qty = 0;
     }
 
-    result.success = result.spot_response.success() && result.futures_response.success();
+    bool futures_ok = result.futures_response.success() || position.futures_size == 0;
+    bool spot_ok = result.spot_response.success() || hedge_mode_ == HedgeMode::USDC_COLLATERAL;
+    result.success = futures_ok && spot_ok;
+
     if (result.success) {
         spdlog::info("Delta-neutral closed: {}", symbol);
     }

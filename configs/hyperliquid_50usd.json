@@ -1,0 +1,64 @@
+{
+    "mode": "PAPER",
+    "exchange": {
+        "exchange_type": "hyperliquid",
+        "wallet_private_key_env": "HL_PRIVATE_KEY",
+        "hl_rest_url": "https://api.hyperliquid-testnet.xyz",
+        "hl_user_address": "",
+        "hl_use_api_wallet": false,
+        "testnet": true
+    },
+    "fees": {
+        "perp_taker_fee_pct": 0.00045,
+        "perp_maker_fee_pct": 0.00015,
+        "spot_taker_fee_pct": 0.00070,
+        "spot_maker_fee_pct": 0.00040
+    },
+    "strategy": {
+        "symbols": ["ETHUSDT"],
+        "hedge_mode": "USDC_COLLATERAL",
+        "min_funding_rate": 0.00002,
+        "min_annual_yield_pct": 10.0,
+        "min_avg_funding_rate": 0.00001,
+        "max_basis_deviation_pct": 1.0,
+        "funding_rate_lookback_periods": 72,
+        "entry_score_threshold": 0.5,
+        "max_positions": 1,
+        "rebalance_threshold_pct": 5.0,
+        "max_holding_periods": 720,
+        "funding_periods_per_day": 24,
+        "min_notional_usd": 10.0,
+        "max_fee_breakeven_days": 14.0,
+        "hlp_allocation_pct": 0.0
+    },
+    "risk": {
+        "max_total_exposure_usd": 50.0,
+        "max_per_symbol_exposure_usd": 25.0,
+        "max_drawdown_pct": 10.0,
+        "max_daily_loss_usd": 5.0,
+        "futures_leverage": 1,
+        "margin_type": "CROSS",
+        "stop_loss_basis_bps": 200.0,
+        "max_funding_rate_to_pay": -0.00002,
+        "max_orders_per_minute": 5
+    },
+    "capital": {
+        "starting_balance_usd": 50.0,
+        "allocation_pct": 50.0
+    },
+    "logging": {
+        "log_dir": "./logs",
+        "log_level": "debug",
+        "log_to_console": true,
+        "log_to_file": true
+    },
+    "polling": {
+        "funding_rate_interval_s": 30,
+        "price_update_interval_ms": 2000,
+        "strategy_eval_interval_s": 60,
+        "hedge_check_interval_s": 30,
+        "pnl_snapshot_interval_s": 300
+    },
+    "database_path": "./data/delta_neutral.db",
+    "trade_ledger_path": "./data/trades.jsonl"
+}
