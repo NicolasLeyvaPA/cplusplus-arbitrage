@@ -119,6 +119,16 @@ target_link_libraries(delta_neutral_bot PRIVATE
     CLI11::CLI11
 )
 
+# Backtester executable
+add_executable(backtest_tool
+    src/backtest/backtester.cpp
+    src/backtest/main_backtest.cpp
+)
+target_link_libraries(backtest_tool PRIVATE
+    arblib
+    CLI11::CLI11
+)
+
 # Tests
 enable_testing()
 add_executable(tests
